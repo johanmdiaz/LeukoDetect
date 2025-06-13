@@ -164,6 +164,9 @@ if ensure_model_exists(model_name):
 else:
     st.stop()
 
+# Add small space before title
+st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+
 class_names = list(model.names.values())
 
 # Sidebar: Class selection (more compact)
