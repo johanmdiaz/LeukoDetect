@@ -301,49 +301,70 @@ elif source == "Video":
             os.unlink(video_path)
 
 elif source == "Webcam":
-    if st.sidebar.button("Start Webcam", key="start_webcam"):
-        # Create columns for webcam display
-        col1, col2 = st.columns(2)
-        org_frame = col1.empty()
-        ann_frame = col2.empty()
+    # Check if running on Streamlit Cloud (no webcam available)
+    if 'STREAMLIT_CLOUD' in os.environ or not os.path.exists('/dev/video0'):
+        st.warning("⚠️ Webcam is not available on Streamlit Cloud")
+        st.info("""
+        **Alternative solutions:**
+        1. **Use Image Upload**: Switch to 'Image' source for single image analysis
+        2. **Use Video Upload**: Switch to 'Video' source to upload and analyze video files
+        3. **Run Locally**: Download and run this app locally to access your webcam
         
-        # Create stop button
-        stop_button = st.button("Stop Webcam")
-        
-        # Start webcam capture
-        cap = cv2.VideoCapture(0)  # Use webcam index 0
-        
-        if not cap.isOpened():
-            st.error("Could not open webcam. Please verify the webcam is connected properly.")
-        else:
-            while cap.isOpened() and not stop_button:
-                success, frame = cap.read()
-                if not success:
-                    st.warning("Failed to read frame from webcam.")
-                    break
-                
-                # Process frame with model
-                if enable_trk == "Yes":
-                    results = model.track(
-                        frame, conf=conf, iou=iou, classes=selected_inds, persist=True
-                    )
-                else:
-                    results = model(frame, conf=conf, iou=iou, classes=selected_inds)
-                
-                # Get the first result
-                result = results[0]
-                annotated_frame = result.plot()
-                
-                # Display frames
-                org_frame.image(frame, channels="BGR", caption="Original Webcam")
-                ann_frame.image(annotated_frame, channels="BGR", caption="Inference Result")
-                
-                # Check for stop button
-                if stop_button:
-                    break
+        **To run locally:**
+        ```bash
+        git clone <repository-url>
+        cd leukodetect
+        pip install -r requirements.txt
+        streamlit run app.py
+        ```
+        """)
+    else:
+        if st.sidebar.button("Start Webcam", key="start_webcam"):
+            # Create columns for webcam display
+            col1, col2 = st.columns(2)
+            org_frame = col1.empty()
+            ann_frame = col2.empty()
             
-            cap.release()
-            cv2.destroyAllWindows()
+            # Create stop button
+            stop_button = st.button("Stop Webcam")
+            
+            # Start webcam capture with error handling
+            cap = cv2.VideoCapture(0)  # Use webcam index 0
+            
+            if not cap.isOpened():
+                st.error("Could not open webcam. Please verify the webcam is connected properly.")
+            else:
+                try:
+                    while cap.isOpened() and not stop_button:
+                        success, frame = cap.read()
+                        if not success:
+                            st.warning("Failed to read frame from webcam.")
+                            break
+                        
+                        # Process frame with model
+                        if enable_trk == "Yes":
+                            results = model.track(
+                                frame, conf=conf, iou=iou, classes=selected_inds, persist=True
+                            )
+                        else:
+                            results = model(frame, conf=conf, iou=iou, classes=selected_inds)
+                        
+                        # Get the first result
+                        result = results[0]
+                        annotated_frame = result.plot()
+                        
+                        # Display frames
+                        org_frame.image(frame, channels="BGR", caption="Original Webcam")
+                        ann_frame.image(annotated_frame, channels="BGR", caption="Inference Result")
+                        
+                        # Check for stop button
+                        if stop_button:
+                            break
+                except Exception as e:
+                    st.error(f"Webcam error: {str(e)}")
+                finally:
+                    cap.release()
+                    cv2.destroyAllWindows()
 
 # Footer with information about LeukoDetect
 st.markdown("---")
