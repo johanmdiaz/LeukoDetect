@@ -102,15 +102,21 @@ def ensure_logo_exists():
     filepath = logo_config["path"]
     
     if not os.path.exists(filepath):
-        st.info("Logo not found locally. Downloading from Dropbox...")
-        
-        with st.spinner("Downloading logo..."):
-            success = download_file(logo_config["url"], filepath, "logo")
+        # Download silently without showing messages
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
             
-        if success:
-            st.success("✅ Logo downloaded successfully!")
-        else:
-            st.error("❌ Failed to download logo")
+            # Download without progress bar or messages
+            response = requests.get(logo_config["url"], stream=True)
+            response.raise_for_status()
+            
+            with open(filepath, 'wb') as file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        file.write(chunk)
+            return True
+        except Exception:
             return False
     
     return True
