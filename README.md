@@ -1,7 +1,3 @@
-# LeukoDetect
-Leukemia cells detection on your browser with the power of Ultralytic's YOLO11 🚀
-
-
 # LeukoDetect Application 🔬
 
 A real-time leukemia cell detection application powered by YOLO11 and Streamlit.
@@ -14,6 +10,12 @@ A real-time leukemia cell detection application powered by YOLO11 and Streamlit.
 - **Automatic Downloads**: Models and assets are downloaded automatically from Dropbox
 - **Interactive Results**: Visual results table with class names and confidence percentages
 - **Tracking Support**: Object tracking for video and webcam sources
+
+## Important Notes
+
+⚠️ **Webcam Limitation**: Webcam functionality is only available when running the app locally. Streamlit Community Cloud doesn't have access to physical webcams.
+
+**For webcam usage**: Download and run the app locally on your computer.
 
 ## Models
 
@@ -52,7 +54,10 @@ streamlit run app.py
 ## Usage
 
 1. **Select Model**: Choose from available YOLO11 models
-2. **Choose Source**: Select Image, Video, or Webcam
+2. **Choose Source**: 
+   - **Image**: Upload single images for analysis
+   - **Video**: Upload video files for frame-by-frame analysis
+   - **Webcam**: Real-time analysis (local deployment only)
 3. **Configure Classes**: Expand the Classes section to select specific cell types
 4. **Adjust Thresholds**: Set confidence and IoU thresholds
 5. **Start Detection**: Click Start and upload your image/video or use webcam
