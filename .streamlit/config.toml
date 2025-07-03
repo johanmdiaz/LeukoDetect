@@ -1,12 +1,22 @@
 [server]
-# Cloud-optimized file upload settings
-maxUploadSize = 10
-maxMessageSize = 10
-enableWebsocketCompression = true
-enableCORS = true
+# Ultra-conservative file upload settings for maximum Render compatibility
+maxUploadSize = 3
+maxMessageSize = 3
+enableWebsocketCompression = false
+enableCORS = false
 enableXsrfProtection = false
 
-# Reduce memory pressure on cloud platforms
+# Enhanced timeout and connection settings
+disconnectedSessionTTL = 30
+sessionStateMaxEntries = 500
+sessionStateMaxBytes = 50
+
+# Network timeout optimizations
+connectionTimeout = 30
+keepAliveTimeout = 30
+requestTimeout = 30
+
+# Memory and performance optimizations
 enableArrowTruncation = true
 
 # Cloud platform settings
@@ -14,14 +24,13 @@ port = 8501
 address = "0.0.0.0"
 headless = true
 
-# Session settings for cloud deployment
-disconnectedSessionTTL = 60
-
 # Browser settings
 gatherUsageStats = false
 
 [browser]
 gatherUsageStats = false
+serverAddress = "0.0.0.0"
+serverPort = 8501
 
 [theme]
 primaryColor = "#155a5a"
@@ -32,8 +41,15 @@ textColor = "#262730"
 [global]
 # Development settings
 developmentMode = false
-logLevel = "info"
+logLevel = "error"
 
-# Reduce memory usage
-maxCachedMessageAge = 2
-dataFrameSerialization = "legacy" 
+# Ultra-conservative memory settings
+maxCachedMessageAge = 0
+dataFrameSerialization = "legacy"
+showErrorDetails = false
+
+# Network timeout settings
+[client]
+caching = false
+displayEnabled = true
+toolbarMode = "minimal" 
