@@ -1,336 +1,12 @@
 import streamlit as st
-import torch
-from ultralytics import YOLO
-import cv2
 import numpy as np
+import cv2
 from PIL import Image
-import requests
-import os
-import time
-from datetime import datetime
-import tempfile
-from pathlib import Path
-import threading
-import io
-import base64
-import gc
+from ultralytics import YOLO
 import warnings
-
-# Cloud deployment configuration  
-def is_cloud_deployment():
-    """Detect if running on cloud platform"""
-    cloud_indicators = [
-        'RENDER',
-        'HEROKU', 
-        'VERCEL',
-        'NETLIFY',
-        'Railway',
-        'STREAMLIT_SHARING',
-        'DYNO'  # Heroku
-    ]
-    return any(os.getenv(key) for key in cloud_indicators) or 'streamlit.io' in os.getenv('SERVER_NAME', '')
-
-# Configure for cloud deployment
-IS_CLOUD = is_cloud_deployment()
-
-# Force cloud mode to ensure base64 encoding (set to True for guaranteed cloud compatibility)
-force_cloud_mode = True
-
-# Cloud-specific Streamlit configuration
-if IS_CLOUD or force_cloud_mode:
-    # Early detection for enhanced file handling
-    import streamlit as st
-    # Configuration will be handled by .streamlit/config.toml
-    pass
-
-# Utility functions for robust image handling
-def convert_image_to_base64(image):
-    """Convert numpy array or PIL image to base64 string for reliable display"""
-    try:
-        # Convert numpy array to PIL Image if needed
-        if isinstance(image, np.ndarray):
-            # Ensure the image is in the correct format (0-255, uint8)
-            if image.dtype != np.uint8:
-                image = np.clip(image, 0, 255).astype(np.uint8)
-            # Handle different channel orders
-            if len(image.shape) == 3:
-                if image.shape[2] == 3:
-                    # RGB format
-                    image = Image.fromarray(image)
-                elif image.shape[2] == 4:
-                    # RGBA format
-                    image = Image.fromarray(image, 'RGBA')
-            else:
-                # Grayscale
-                image = Image.fromarray(image, 'L')
-        
-        # Convert PIL Image to base64
-        buffered = io.BytesIO()
-        # Use JPEG for smaller file sizes, PNG for transparency
-        format_type = "PNG" if hasattr(image, 'mode') and 'A' in str(image.mode) else "JPEG"
-        if format_type == "JPEG" and image.mode in ('RGBA', 'LA'):
-            # Convert RGBA to RGB for JPEG
-            bg = Image.new('RGB', image.size, (255, 255, 255))
-            bg.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
-            image = bg
-        
-        image.save(buffered, format=format_type, quality=95 if format_type == "JPEG" else None)
-        img_str = base64.b64encode(buffered.getvalue()).decode()
-        return f"data:image/{format_type.lower()};base64,{img_str}"
-    except Exception as e:
-        st.error(f"Error converting image to base64: {e}")
-        return None
-
-def optimize_image_for_display(image, max_width=800, max_height=600):
-    """Optimize image size for display to reduce memory usage"""
-    try:
-        if isinstance(image, np.ndarray):
-            h, w = image.shape[:2]
-            if w > max_width or h > max_height:
-                # Calculate new dimensions maintaining aspect ratio
-                ratio = min(max_width/w, max_height/h)
-                new_w, new_h = int(w * ratio), int(h * ratio)
-                image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        elif isinstance(image, Image.Image):
-            image.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
-        return image
-    except Exception as e:
-        st.warning(f"Could not optimize image: {e}")
-        return image
-
-def display_image_safe(image, caption="", use_container_width=True, width=None, **kwargs):
-    """Safely display image, using base64 on cloud platforms to avoid MediaFileHandler issues"""
-    try:
-        # Optimize image first to reduce memory usage
-        image = optimize_image_for_display(image)
-        
-        # On cloud platforms or when forced, use base64 encoding
-        if IS_CLOUD or force_cloud_mode:
-            base64_image = convert_image_to_base64(image)
-            if base64_image:
-                # Display using markdown with base64 data URI
-                if width is not None:
-                    width_style = f"width: {width}px;"
-                elif use_container_width:
-                    width_style = "width: 100%;"
-                else:
-                    width_style = "width: 160px;"  # Default for thumbnails
-                
-                caption_html = f"<br><small>{caption}</small>" if caption else ""
-                st.markdown(
-                    f'<div style="text-align: center;"><img src="{base64_image}" style="{width_style} max-width: 100%; height: auto;">{caption_html}</div>',
-                    unsafe_allow_html=True
-                )
-                return True
-            else:
-                st.error("Failed to process image for display")
-                return False
-        else:
-            # On local development, try normal Streamlit display first
-            try:
-                # Force base64 for all deployments to avoid MediaFileHandler issues
-                base64_image = convert_image_to_base64(image)
-                if base64_image:
-                    if width is not None:
-                        width_style = f"width: {width}px;"
-                    elif use_container_width:
-                        width_style = "width: 100%;"
-                    else:
-                        width_style = "width: 160px;"  # Default for thumbnails
-                    
-                    caption_html = f"<br><small>{caption}</small>" if caption else ""
-                    st.markdown(
-                        f'<div style="text-align: center;"><img src="{base64_image}" style="{width_style} max-width: 100%; height: auto;">{caption_html}</div>',
-                        unsafe_allow_html=True
-                    )
-                    return True
-                else:
-                    # Last resort fallback to regular st.image
-                    st.image(image, caption=caption, use_container_width=use_container_width, **kwargs)
-                    return True
-            except Exception as local_error:
-                st.error(f"Image display failed: {local_error}")
-                return False
-    except Exception as e:
-        st.error(f"Error displaying image: {e}")
-        return False
-
-def cleanup_memory():
-    """Perform garbage collection to free memory"""
-    try:
-        gc.collect()
-        # Clear some session state if it gets too large
-        if hasattr(st.session_state, 'keys'):
-            # Keep important session state, clear temporary data
-            temp_keys = [k for k in st.session_state.keys() if k.startswith('temp_') or k.startswith('cache_')]
-            for key in temp_keys:
-                if key in st.session_state:
-                    del st.session_state[key]
-    except Exception:
-        pass
-
-def clear_upload_session():
-    """Clear all upload-related session state to prevent conflicts"""
-    try:
-        # Clear all file uploader related session state
-        upload_keys = [k for k in st.session_state.keys() if 'upload' in k.lower() or 'file' in k.lower()]
-        for key in upload_keys:
-            if key in st.session_state:
-                del st.session_state[key]
-        
-        # Clear any cached file data
-        if hasattr(st, '_file_uploader_state_cache'):
-            st._file_uploader_state_cache.clear()
-            
-        # Force garbage collection
-        gc.collect()
-        
-    except Exception as e:
-        # Silent fail - don't break the app if cleanup fails
-        pass
-
-def reset_file_uploader_widget(key):
-    """Reset specific file uploader widget state"""
-    try:
-        # Clear the specific widget's session state
-        widget_keys = [k for k in st.session_state.keys() if key in k]
-        for widget_key in widget_keys:
-            if widget_key in st.session_state:
-                del st.session_state[widget_key]
-                
-        # Clear any retry counters for this widget
-        retry_key = f"{key}_retry_count"
-        if retry_key in st.session_state:
-            st.session_state[retry_key] = 0
-            
-    except Exception:
-        pass
-
-def validate_uploaded_file(uploaded_file, max_size_mb=3):
-    """Validate uploaded file size and type for cloud compatibility"""
-    if uploaded_file is None:
-        return False, "No file uploaded"
-    
-    # Check file size (cloud platforms typically have smaller limits)
-    file_size_mb = uploaded_file.size / (1024 * 1024)
-    if file_size_mb > max_size_mb:
-        return False, f"File too large ({file_size_mb:.1f}MB). Maximum size allowed: {max_size_mb}MB"
-    
-    # Check file type
-    allowed_types = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
-    file_extension = uploaded_file.name.split('.')[-1].lower()
-    if file_extension not in allowed_types:
-        return False, f"Invalid file type: {file_extension}. Allowed types: {', '.join(allowed_types)}"
-    
-    return True, "File is valid"
-
-def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, help=None, 
-                      on_change=None, args=None, kwargs=None, disabled=False, 
-                      label_visibility="visible", max_size_mb=3):
-    """Cloud-safe file uploader with enhanced error handling and retry logic"""
-    
-    # Set cloud-optimized default file types if not specified
-    if type is None:
-        type = ["jpg", "jpeg", "png"]
-    
-    # Create a unique key for retry attempts
-    retry_key = f"{key}_retry_count" if key else "upload_retry_count"
-    
-    # Initialize retry counter in session state - with better error handling
-    try:
-        if retry_key not in st.session_state:
-            st.session_state[retry_key] = 0
-    except Exception:
-        # Fallback initialization if session state access fails
-        st.session_state[retry_key] = 0
-    
-    # Proactive cleanup before first attempt to prevent session conflicts
-    if st.session_state[retry_key] == 0:
-        clear_upload_session()
-        reset_file_uploader_widget(key)
-    
-    # Maximum retry attempts
-    max_retries = 3
-    
-    try:
-        # Show retry information if needed
-        retry_count = st.session_state.get(retry_key, 0)
-        if retry_count > 0:
-            st.info(f"🔄 Upload attempt {retry_count + 1} of {max_retries + 1}")
-        
-        # Use Streamlit's file uploader with cloud-optimized settings
-        uploaded_file = st.file_uploader(
-            label=label,
-            type=type,
-            accept_multiple_files=accept_multiple_files,
-            key=f"{key}_{retry_count}" if key else None,  # Unique key for each retry
-            help=help,
-            on_change=on_change,
-            args=args,
-            kwargs=kwargs,
-            disabled=disabled,
-            label_visibility=label_visibility
-        )
-        
-        if uploaded_file is not None:
-            # Validate the uploaded file
-            is_valid, message = validate_uploaded_file(uploaded_file, max_size_mb)
-            
-            if not is_valid:
-                st.error(f"Upload Error: {message}")
-                return None
-            
-            # Reset retry counter on successful upload
-            st.session_state[retry_key] = 0
-            
-            # Cleanup after successful upload to prevent future conflicts
-            cleanup_memory()
-            
-            # Show success message for valid uploads
-            if not accept_multiple_files:  # Single file
-                st.success(f"✅ File uploaded successfully: {uploaded_file.name} ({uploaded_file.size/1024:.1f}KB)")
-            
-            return uploaded_file
-        
-        return None
-        
-    except Exception as e:
-        # Handle upload errors gracefully with retry logic
-        error_msg = str(e).lower()
-        
-        if any(code in error_msg for code in ["400", "bad request", "network error", "timeout"]):
-            current_retry_count = st.session_state.get(retry_key, 0)
-            st.session_state[retry_key] = current_retry_count + 1
-            
-            if st.session_state[retry_key] <= max_retries:
-                # Show retry option
-                current_retry_count = st.session_state.get(retry_key, 0)
-                st.error(f"❌ Upload failed (attempt {current_retry_count}): Network error or file too large.")
-                st.warning("💡 **Possible solutions:**")
-                st.markdown("- Try a **smaller image** (under 1MB)")
-                st.markdown("- **Refresh the page** and try again")
-                st.markdown("- **Compress your image** before uploading")
-                
-                # Auto-retry button
-                if st.button("🔄 Retry Upload", key=f"retry_{key}_{current_retry_count}"):
-                    st.rerun()
-                
-                return None
-            else:
-                # Max retries reached - offer alternative solution
-                st.error("❌ **Upload failed after multiple attempts.** This is a known issue with cloud deployments.")
-                st.warning("🛠️ **Alternative Solution:** Try using a smaller image (under 1MB) or contact support.")
-                
-                # Reset retry counter
-                st.session_state[retry_key] = 0
-                return None
-        
-        elif "413" in error_msg:
-            st.error("❌ Upload failed: File is too large. Please try a smaller file (under 1MB).")
-        else:
-            st.error(f"❌ Upload failed: {e}")
-        
-        return None
+import os
+import requests
+from pathlib import Path
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -380,7 +56,7 @@ model_config = {
 
 # Logo configuration
 logo_config = {
-    "path": "logov1.png",  # Logo is now in main directory
+    "path": "assets/logov1.png",
     "url": "https://www.dropbox.com/scl/fi/5009uw9qyqusu1fqts6tu/logov1.png?rlkey=sfoxvloqldcnangk56d4hp4qi&st=kmoauecw&dl=1"
 }
 
@@ -507,7 +183,7 @@ def ensure_example_image_exists(image_name):
 # Sidebar: Logo (download if necessary)
 with st.sidebar:
     if ensure_logo_exists():
-        display_image_safe(Image.open(logo_config["path"]), caption="", use_container_width=False)
+        st.image(logo_config["path"], width=250)
     else:
         st.warning("Logo could not be loaded")
     st.title("User Configuration")
@@ -526,58 +202,11 @@ def load_model(path):
         st.error(f"Error loading model: {e}")
         return None
 
-# SAHI AutoDetection Model
-@st.cache_resource
-def load_sahi_model(path):
-    """Load SAHI AutoDetection model"""
-    try:
-        from ultralytics.utils.torch_utils import select_device
-        return AutoDetectionModel.from_pretrained(
-            model_type="ultralytics", 
-            model_path=path, 
-            device=select_device('')
-        )
-    except Exception as e:
-        st.error(f"Error loading SAHI model: {e}")
-        return None
-
-def perform_sahi_inference(image_np, sahi_model, conf, slice_width, slice_height, overlap_ratio):
-    """Perform SAHI inference on image"""
-    try:
-        # Convert BGR to RGB for SAHI
-        image_rgb = cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB)
-        
-        # Perform sliced prediction
-        result = get_sliced_prediction(
-            image_rgb,
-            sahi_model,
-            slice_height=slice_height,
-            slice_width=slice_width,
-            overlap_height_ratio=overlap_ratio,
-            overlap_width_ratio=overlap_ratio,
-            postprocess_type="NMS",  # Use NMS for post-processing
-            postprocess_match_threshold=0.5,
-            postprocess_class_agnostic=False
-        )
-        
-        return result
-    except Exception as e:
-        st.error(f"Error during SAHI inference: {e}")
-        return None
-
-def safe_extract_tensor_value(tensor_like_obj):
-    """Safely extract value from tensor or non-tensor object"""
-    if hasattr(tensor_like_obj, 'cpu'):
-        return tensor_like_obj.cpu().numpy()
-    else:
-        return tensor_like_obj
-
 # Ensure model exists and load it
 if ensure_model_exists(model_name):
     model = load_model(model_config[model_name]["path"])
     if model is None:
         st.stop()
-    
 else:
     st.stop()
 
@@ -609,35 +238,6 @@ else:
 conf = float(st.sidebar.slider("Confidence Threshold", 0.0, 1.0, 0.25, 0.01))
 iou = float(st.sidebar.slider("IoU Threshold", 0.0, 1.0, 0.45, 0.01))
 
-# SAHI Configuration (only for images)
-sahi_model = None
-if source == "Image":
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🔍 SAHI Configuration")
-    st.sidebar.markdown("*For better detection of small objects*")
-    
-    enable_sahi = st.sidebar.toggle("Enable SAHI", value=False, help="Use SAHI for sliced inference to detect small objects better")
-    
-    if enable_sahi:
-        slice_width = st.sidebar.slider("Slice Width", 256, 1024, 512, 64, help="Width of each slice for SAHI inference")
-        slice_height = st.sidebar.slider("Slice Height", 256, 1024, 512, 64, help="Height of each slice for SAHI inference")
-        overlap_ratio = st.sidebar.slider("Overlap Ratio", 0.1, 0.9, 0.2, 0.1, help="Overlap ratio between slices")
-        
-        # Load SAHI model when enabled
-        sahi_model = load_sahi_model(model_config[model_name]["path"])
-        if sahi_model is None:
-            st.warning("Failed to load SAHI model. Falling back to regular inference.")
-            enable_sahi = False
-    else:
-        slice_width = 512
-        slice_height = 512
-        overlap_ratio = 0.2
-else:
-    enable_sahi = False
-    slice_width = 512
-    slice_height = 512
-    overlap_ratio = 0.2
-
 # Sidebar: Start button for Image source sets session state
 if source == "Image":
     if st.sidebar.button("Start", key="start_image"):
@@ -645,12 +245,6 @@ if source == "Image":
 
 # Sidebar: Start button at the end for other sources (optional, can be removed if not needed)
 st.sidebar.markdown("<div style='height: 32px;'></div>", unsafe_allow_html=True)  # Spacer
-
-# Initialize clean session state on app start
-if "app_initialized" not in st.session_state:
-    clear_upload_session()
-    cleanup_memory()
-    st.session_state["app_initialized"] = True
 
 # Main title and subtitle
 st.markdown("""
@@ -665,12 +259,11 @@ if source == "Image" and st.session_state.get("show_upload", False):
     st.markdown("### Upload your Image")
     
     # Single file uploader that handles both regular uploads and example images
-    uploaded_file = safe_file_uploader(
+    uploaded_file = st.file_uploader(
         "Drag and drop your Image here or browse your computer",
         type=["jpg", "jpeg", "png"],
         label_visibility="collapsed",
-        key="main_image_uploader",
-        max_size_mb=3
+        key="main_image_uploader"
     )
     
     # Check if we have an example image selected
@@ -682,7 +275,7 @@ if source == "Image" and st.session_state.get("show_upload", False):
         if "uploaded_example" in st.session_state:
             del st.session_state["uploaded_example"]
         
-        # Process regular upload - FIRST OCCURRENCE
+        # Process regular upload
         st.write(f"**{uploaded_file.name}**  {uploaded_file.size/1024:.1f}KB")
         image = Image.open(uploaded_file)
         image_np = np.array(image)
@@ -690,72 +283,16 @@ if source == "Image" and st.session_state.get("show_upload", False):
         
         col1, col2 = st.columns(2)
         with col1:
-            display_image_safe(image, caption="Original Image", use_container_width=True)
+            st.image(image, caption="Original Image", use_container_width=True)
         
-        # Inference with SAHI or regular YOLO
-        if enable_sahi and sahi_model is not None:
-            st.info("🔍 Using SAHI for enhanced small object detection...")
-            sahi_result = perform_sahi_inference(image_np, sahi_model, conf, slice_width, slice_height, overlap_ratio)
-            
-            if sahi_result is not None:
-                # Convert SAHI result to display format with bounding boxes
-                import tempfile
-                import os
-                
-                # Create temporary file to save the annotated image
-                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
-                    temp_path = tmp_file.name
-                
-                # Export the visualization with bounding boxes
-                sahi_result.export_visuals(export_dir=os.path.dirname(temp_path), 
-                                         file_name=os.path.basename(temp_path).replace('.png', ''),
-                                         hide_labels=False,
-                                         hide_conf=False)
-                
-                # Read the annotated image
-                annotated_frame = cv2.imread(temp_path)
-                if annotated_frame is not None:
-                    annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-                else:
-                    # Fallback to original image if visualization fails
-                    annotated_frame = sahi_result.image
-                
-                # Clean up temporary file
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
-                
-                # Create a mock result object for consistency with the rest of the code
-                import torch
-                class MockResult:
-                    def __init__(self, sahi_result, class_names):
-                        self.boxes = []
-                        self.names = {i: name for i, name in enumerate(class_names)}
-                        
-                        # Convert SAHI detections to boxes format
-                        for detection in sahi_result.object_prediction_list:
-                            box_info = type('Box', (), {})()
-                            # Create tensor-like objects that have .cpu().numpy() methods
-                            box_info.cls = [torch.tensor(detection.category.id)]
-                            box_info.conf = [torch.tensor(detection.score.value)]
-                            self.boxes.append(box_info)
-                
-                result = MockResult(sahi_result, class_names)
-            else:
-                st.warning("SAHI inference failed. Using regular inference...")
-                results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
-                result = results[0]
-                annotated_frame = result.plot()
-                annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-        else:
-            results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
-            result = results[0]
-            annotated_frame = result.plot()
-            annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+        # Inference
+        results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
+        result = results[0]
+        annotated_frame = result.plot()
+        annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
         
         with col2:
-            display_image_safe(annotated_frame, caption="Inference Result", use_container_width=True)
+            st.image(annotated_frame, caption="Inference Result", use_container_width=True)
         
         # Results table
         if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
@@ -769,8 +306,8 @@ if source == "Image" and st.session_state.get("show_upload", False):
                 </tr>
             """
             for box in result.boxes:
-                cls = int(safe_extract_tensor_value(box.cls[0]))
-                conf_score = float(safe_extract_tensor_value(box.conf[0]))
+                cls = int(box.cls[0].cpu().numpy())
+                conf_score = float(box.conf[0].cpu().numpy())
                 class_name = result.names[cls]
                 results_md += f"<tr><td style='padding:8px;'>{class_name}</td><td style='padding:8px;'>{conf_score*100:.2f}%</td></tr>"
             results_md += "</table></div>"
@@ -782,13 +319,9 @@ if source == "Image" and st.session_state.get("show_upload", False):
         st.markdown("<div style='margin-top: 30px;'></div>", unsafe_allow_html=True)
         
         # Clear button to try another image
-        if st.button("🔄 Clear and Try Another Image", key="clear_upload_1"):
+        if st.button("🔄 Clear and Try Another Image", key="clear_example"):
             if "uploaded_example" in st.session_state:
                 del st.session_state["uploaded_example"]
-            # Comprehensive cleanup before next upload
-            clear_upload_session()
-            reset_file_uploader_widget("main_image_uploader")
-            cleanup_memory()
             st.rerun()
     
     elif example_file is not None:
@@ -800,72 +333,16 @@ if source == "Image" and st.session_state.get("show_upload", False):
         
         col1, col2 = st.columns(2)
         with col1:
-            display_image_safe(image, caption="Original Image", use_container_width=True)
+            st.image(image, caption="Original Image", use_container_width=True)
         
-        # Inference with SAHI or regular YOLO
-        if enable_sahi and sahi_model is not None:
-            st.info("🔍 Using SAHI for enhanced small object detection...")
-            sahi_result = perform_sahi_inference(image_np, sahi_model, conf, slice_width, slice_height, overlap_ratio)
-            
-            if sahi_result is not None:
-                # Convert SAHI result to display format with bounding boxes
-                import tempfile
-                import os
-                
-                # Create temporary file to save the annotated image
-                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
-                    temp_path = tmp_file.name
-                
-                # Export the visualization with bounding boxes
-                sahi_result.export_visuals(export_dir=os.path.dirname(temp_path), 
-                                         file_name=os.path.basename(temp_path).replace('.png', ''),
-                                         hide_labels=False,
-                                         hide_conf=False)
-                
-                # Read the annotated image
-                annotated_frame = cv2.imread(temp_path)
-                if annotated_frame is not None:
-                    annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-                else:
-                    # Fallback to original image if visualization fails
-                    annotated_frame = sahi_result.image
-                
-                # Clean up temporary file
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
-                
-                # Create a mock result object for consistency with the rest of the code
-                import torch
-                class MockResult:
-                    def __init__(self, sahi_result, class_names):
-                        self.boxes = []
-                        self.names = {i: name for i, name in enumerate(class_names)}
-                        
-                        # Convert SAHI detections to boxes format
-                        for detection in sahi_result.object_prediction_list:
-                            box_info = type('Box', (), {})()
-                            # Create tensor-like objects that have .cpu().numpy() methods
-                            box_info.cls = [torch.tensor(detection.category.id)]
-                            box_info.conf = [torch.tensor(detection.score.value)]
-                            self.boxes.append(box_info)
-                
-                result = MockResult(sahi_result, class_names)
-            else:
-                st.warning("SAHI inference failed. Using regular inference...")
-                results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
-                result = results[0]
-                annotated_frame = result.plot()
-                annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-        else:
-            results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
-            result = results[0]
-            annotated_frame = result.plot()
-            annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+        # Inference
+        results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
+        result = results[0]
+        annotated_frame = result.plot()
+        annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
         
         with col2:
-            display_image_safe(annotated_frame, caption="Inference Result", use_container_width=True)
+            st.image(annotated_frame, caption="Inference Result", use_container_width=True)
         
         # Results table
         if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
@@ -879,8 +356,8 @@ if source == "Image" and st.session_state.get("show_upload", False):
                 </tr>
             """
             for box in result.boxes:
-                cls = int(safe_extract_tensor_value(box.cls[0]))
-                conf_score = float(safe_extract_tensor_value(box.conf[0]))
+                cls = int(box.cls[0].cpu().numpy())
+                conf_score = float(box.conf[0].cpu().numpy())
                 class_name = result.names[cls]
                 results_md += f"<tr><td style='padding:8px;'>{class_name}</td><td style='padding:8px;'>{conf_score*100:.2f}%</td></tr>"
             results_md += "</table></div>"
@@ -892,13 +369,9 @@ if source == "Image" and st.session_state.get("show_upload", False):
         st.markdown("<div style='margin-top: 30px;'></div>", unsafe_allow_html=True)
         
         # Clear button to try another image
-        if st.button("🔄 Clear and Try Another Image", key="clear_upload_2"):
+        if st.button("🔄 Clear and Try Another Image", key="clear_example"):
             if "uploaded_example" in st.session_state:
                 del st.session_state["uploaded_example"]
-            # Comprehensive cleanup before next upload
-            clear_upload_session()
-            reset_file_uploader_widget("main_image_uploader")
-            cleanup_memory()
             st.rerun()
     
     # Example Images Section - Clickable Thumbnails
@@ -918,11 +391,10 @@ if source == "Image" and st.session_state.get("show_upload", False):
             # Display title - centered
             st.markdown(f"<p style='text-align: center; font-size: 11px; font-weight: bold; color: #155a5a; margin-bottom: 2px; margin-top: 0px;'>{example_config['title']}</p>", unsafe_allow_html=True)
             
-            # Center the image - using safe display to avoid MediaFileHandler issues
+            # Center the image
             col_img1, col_img2, col_img3 = st.columns([0.5, 1, 0.5])
             with col_img2:
-                # Use safe base64 display for cloud compatibility
-                display_image_safe(example_image, caption="", use_container_width=False, width=160)
+                st.image(example_image, width=160)
             
             # Compact button with reduced spacing and smaller size
             st.markdown("<div style='margin-top: -10px;'></div>", unsafe_allow_html=True)
@@ -931,10 +403,6 @@ if source == "Image" and st.session_state.get("show_upload", False):
             col_btn1, col_btn2, col_btn3 = st.columns([0.5, 1, 0.5])
             with col_btn2:
                 if st.button("Load Image", key="click_myeloblasts", type="secondary"):
-                    # Clear any existing upload state first
-                    clear_upload_session()
-                    reset_file_uploader_widget("main_image_uploader")
-                    
                     # Store the example image in session state to simulate file upload
                     st.session_state["uploaded_example"] = {
                         "image": example_image,
@@ -952,11 +420,10 @@ if source == "Image" and st.session_state.get("show_upload", False):
             # Display title - centered
             st.markdown(f"<p style='text-align: center; font-size: 11px; font-weight: bold; color: #155a5a; margin-bottom: 2px; margin-top: 0px;'>{example_config['title']}</p>", unsafe_allow_html=True)
             
-            # Center the image - using safe display to avoid MediaFileHandler issues
+            # Center the image
             col_img1, col_img2, col_img3 = st.columns([0.5, 1, 0.5])
             with col_img2:
-                # Use safe base64 display for cloud compatibility
-                display_image_safe(example_image, caption="", use_container_width=False, width=160)
+                st.image(example_image, width=160)
             
             # Compact button with reduced spacing and smaller size
             st.markdown("<div style='margin-top: -10px;'></div>", unsafe_allow_html=True)
@@ -965,10 +432,6 @@ if source == "Image" and st.session_state.get("show_upload", False):
             col_btn1, col_btn2, col_btn3 = st.columns([0.5, 1, 0.5])
             with col_btn2:
                 if st.button("Load Image", key="click_neutrophils", type="secondary"):
-                    # Clear any existing upload state first
-                    clear_upload_session()
-                    reset_file_uploader_widget("main_image_uploader")
-                    
                     # Store the example image in session state to simulate file upload
                     st.session_state["uploaded_example"] = {
                         "image": example_image,
