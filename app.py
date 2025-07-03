@@ -21,6 +21,20 @@ if 'STREAMLIT_SERVER_HEADLESS' in os.environ:
     import gc
     gc.collect()
 
+# Debug: Show deployment environment for troubleshooting
+deployment_info = []
+if 'STREAMLIT_SERVER_HEADLESS' in os.environ:
+    deployment_info.append('STREAMLIT_SERVER_HEADLESS')
+if 'RENDER' in os.environ:
+    deployment_info.append('RENDER')
+if 'RENDER_SERVICE_NAME' in os.environ:
+    deployment_info.append('RENDER_SERVICE_NAME')
+if any(key.startswith('RENDER') for key in os.environ.keys()):
+    deployment_info.append('RENDER_ENV_DETECTED')
+
+# Store deployment info for use in display function
+os.environ['DETECTED_DEPLOYMENT'] = ','.join(deployment_info) if deployment_info else 'LOCAL'
+
 st.set_page_config(
     page_title="LeukoDetect Application 🔬", 
     layout="wide",
@@ -54,6 +68,47 @@ def convert_image_to_base64(image):
 
 def display_image_safe(image, caption="", use_container_width=True, width=None):
     """Safely display image with fallback to base64 encoding"""
+    # Check if we're running on a cloud platform (comprehensive detection)
+    is_cloud_deployment = (
+        'STREAMLIT_SERVER_HEADLESS' in os.environ or 
+        'RENDER' in os.environ or 
+        'RENDER_SERVICE_NAME' in os.environ or
+        'HEROKU' in os.environ or 
+        'VERCEL' in os.environ or
+        'NETLIFY' in os.environ or
+        any(key.startswith('RENDER') for key in os.environ.keys()) or
+        'DYNO' in os.environ or  # Heroku
+        'RAILWAY_' in os.environ or  # Railway
+        'STREAMLIT_SHARING' in os.environ  # Streamlit Cloud
+    )
+    
+    # Force cloud mode for all deployments (can be toggled for debugging)
+    force_cloud_mode = True  # Set to False for local testing with MediaFileManager
+    
+    # For cloud deployments, always use base64 to avoid MediaFileHandler issues
+    if is_cloud_deployment or force_cloud_mode:
+        # Debug info (can be removed in production)
+        # st.info(f"🔧 Using base64 display mode (Cloud: {is_cloud_deployment}, Force: {force_cloud_mode})")
+        
+        try:
+            base64_image = convert_image_to_base64(image)
+            if base64_image:
+                width_style = f"width: {width}px;" if width else "max-width: 100%;"
+                st.markdown(f"""
+                <div style="text-align: center;">
+                    <img src="{base64_image}" style="{width_style} height: auto;" />
+                    <p style="text-align: center; font-size: 14px; color: #666; margin-top: 5px;">{caption}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                return
+            else:
+                st.error("Failed to display image using base64 encoding")
+                return
+        except Exception as e:
+            st.error(f"Failed to display image: {e}")
+            return
+    
+    # For local development, try normal Streamlit display first, then fallback
     try:
         # First try normal streamlit image display
         if width is not None:
