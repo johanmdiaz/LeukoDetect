@@ -98,7 +98,7 @@ def optimize_image_for_display(image, max_width=800, max_height=600):
         st.warning(f"Could not optimize image: {e}")
         return image
 
-def display_image_safe(image, caption="", use_container_width=True, **kwargs):
+def display_image_safe(image, caption="", use_container_width=True, width=None, **kwargs):
     """Safely display image, using base64 on cloud platforms to avoid MediaFileHandler issues"""
     try:
         # Optimize image first to reduce memory usage
@@ -109,9 +109,16 @@ def display_image_safe(image, caption="", use_container_width=True, **kwargs):
             base64_image = convert_image_to_base64(image)
             if base64_image:
                 # Display using markdown with base64 data URI
-                width_style = "width: 100%;" if use_container_width else ""
+                if width is not None:
+                    width_style = f"width: {width}px;"
+                elif use_container_width:
+                    width_style = "width: 100%;"
+                else:
+                    width_style = "width: 160px;"  # Default for thumbnails
+                
+                caption_html = f"<br><small>{caption}</small>" if caption else ""
                 st.markdown(
-                    f'<div style="text-align: center;"><img src="{base64_image}" style="{width_style} max-width: 100%; height: auto;"><br><small>{caption}</small></div>',
+                    f'<div style="text-align: center;"><img src="{base64_image}" style="{width_style} max-width: 100%; height: auto;">{caption_html}</div>',
                     unsafe_allow_html=True
                 )
                 return True
@@ -121,19 +128,28 @@ def display_image_safe(image, caption="", use_container_width=True, **kwargs):
         else:
             # On local development, try normal Streamlit display first
             try:
-                st.image(image, caption=caption, use_container_width=use_container_width, **kwargs)
-                return True
-            except Exception as local_error:
-                st.warning(f"Normal display failed, using base64 fallback: {local_error}")
-                # Fallback to base64 even on local if normal display fails
+                # Force base64 for all deployments to avoid MediaFileHandler issues
                 base64_image = convert_image_to_base64(image)
                 if base64_image:
-                    width_style = "width: 100%;" if use_container_width else ""
+                    if width is not None:
+                        width_style = f"width: {width}px;"
+                    elif use_container_width:
+                        width_style = "width: 100%;"
+                    else:
+                        width_style = "width: 160px;"  # Default for thumbnails
+                    
+                    caption_html = f"<br><small>{caption}</small>" if caption else ""
                     st.markdown(
-                        f'<div style="text-align: center;"><img src="{base64_image}" style="{width_style} max-width: 100%; height: auto;"><br><small>{caption}</small></div>',
+                        f'<div style="text-align: center;"><img src="{base64_image}" style="{width_style} max-width: 100%; height: auto;">{caption_html}</div>',
                         unsafe_allow_html=True
                     )
                     return True
+                else:
+                    # Last resort fallback to regular st.image
+                    st.image(image, caption=caption, use_container_width=use_container_width, **kwargs)
+                    return True
+            except Exception as local_error:
+                st.error(f"Image display failed: {local_error}")
                 return False
     except Exception as e:
         st.error(f"Error displaying image: {e}")
@@ -902,10 +918,11 @@ if source == "Image" and st.session_state.get("show_upload", False):
             # Display title - centered
             st.markdown(f"<p style='text-align: center; font-size: 11px; font-weight: bold; color: #155a5a; margin-bottom: 2px; margin-top: 0px;'>{example_config['title']}</p>", unsafe_allow_html=True)
             
-            # Center the image
+            # Center the image - using safe display to avoid MediaFileHandler issues
             col_img1, col_img2, col_img3 = st.columns([0.5, 1, 0.5])
             with col_img2:
-                st.image(example_image, width=160)
+                # Use safe base64 display for cloud compatibility
+                display_image_safe(example_image, caption="", use_container_width=False, width=160)
             
             # Compact button with reduced spacing and smaller size
             st.markdown("<div style='margin-top: -10px;'></div>", unsafe_allow_html=True)
@@ -935,10 +952,11 @@ if source == "Image" and st.session_state.get("show_upload", False):
             # Display title - centered
             st.markdown(f"<p style='text-align: center; font-size: 11px; font-weight: bold; color: #155a5a; margin-bottom: 2px; margin-top: 0px;'>{example_config['title']}</p>", unsafe_allow_html=True)
             
-            # Center the image
+            # Center the image - using safe display to avoid MediaFileHandler issues
             col_img1, col_img2, col_img3 = st.columns([0.5, 1, 0.5])
             with col_img2:
-                st.image(example_image, width=160)
+                # Use safe base64 display for cloud compatibility
+                display_image_safe(example_image, caption="", use_container_width=False, width=160)
             
             # Compact button with reduced spacing and smaller size
             st.markdown("<div style='margin-top: -10px;'></div>", unsafe_allow_html=True)
