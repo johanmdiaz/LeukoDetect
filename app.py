@@ -675,11 +675,10 @@ if source == "Image" and st.session_state.get("show_upload", False):
         except Exception as e:
             st.error(f"❌ Invalid or corrupted image file: {e}")
             st.info("💡 Please try uploading a different image file.")
-            return  # Early return to prevent further processing
+            st.stop()  # Use st.stop() instead of return since we're not in a function
         
         image_np = np.array(image)
         image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-        
         col1, col2 = st.columns(2)
         with col1:
             display_image_safe(image, caption="Original Image", use_container_width=True)
