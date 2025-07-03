@@ -9,6 +9,7 @@ import requests
 from pathlib import Path
 import base64
 import io
+import gc
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -18,7 +19,6 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # Add memory-efficient configuration
 if 'STREAMLIT_SERVER_HEADLESS' in os.environ:
     # Running on cloud platform
-    import gc
     gc.collect()
 
 # Debug: Show deployment environment for troubleshooting
@@ -35,35 +35,69 @@ if any(key.startswith('RENDER') for key in os.environ.keys()):
 # Store deployment info for use in display function
 os.environ['DETECTED_DEPLOYMENT'] = ','.join(deployment_info) if deployment_info else 'LOCAL'
 
-st.set_page_config(
-    page_title="LeukoDetect Application 🔬", 
-    layout="wide",
-    initial_sidebar_state="expanded",
-    menu_items={
-        'Get Help': 'https://github.com/your-repo/issues',
-        'Report a bug': "https://github.com/your-repo/issues",
-        'About': "# LeukoDetect Application\nLeukemia cell detection using YOLO11"
-    }
-)
+# Early cloud detection for configuration
+def is_cloud_deployment():
+    """Detect if running on cloud platform"""
+    cloud_indicators = [
+        'RENDER',
+        'HEROKU', 
+        'VERCEL',
+        'NETLIFY',
+        'Railway',
+        'STREAMLIT_SHARING',
+        'DYNO'  # Heroku
+    ]
+    return any(os.getenv(key) for key in cloud_indicators) or 'streamlit.io' in os.getenv('SERVER_NAME', '')
+
+# Configure for cloud deployment
+IS_CLOUD = is_cloud_deployment()
+
+# Cloud-specific Streamlit configuration
+if IS_CLOUD:
+    # Set up config for cloud deployment
+    st.set_page_config(
+        page_title="LeukoDetect - AI-Powered Leukemia Cell Detection",
+        page_icon="🩸",
+        layout="wide",
+        initial_sidebar_state="expanded",
+        # Cloud-specific settings
+        menu_items={
+            'Get Help': 'https://github.com/your-repo/issues',
+            'Report a bug': "https://github.com/your-repo/issues",
+            'About': "LeukoDetect - AI-powered leukemia cell detection using YOLO11"
+        }
+    )
 
 # Utility functions for robust image handling
 def convert_image_to_base64(image):
-    """Convert numpy array or PIL image to base64 string for reliable display"""
+    """Convert numpy array or PIL image to base64 data URI for cloud-safe display"""
+    if image is None:
+        return None
+    
     try:
-        # Convert numpy array to PIL Image if needed
+        # Handle numpy arrays
         if isinstance(image, np.ndarray):
-            # Ensure the image is in the correct format (0-255, uint8)
+            # Convert BGR to RGB if needed
+            if len(image.shape) == 3 and image.shape[2] == 3:
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            # Ensure correct data type
             if image.dtype != np.uint8:
                 image = np.clip(image, 0, 255).astype(np.uint8)
             image = Image.fromarray(image)
         
-        # Convert PIL Image to base64
-        buffered = io.BytesIO()
-        image.save(buffered, format="PNG")
-        img_str = base64.b64encode(buffered.getvalue()).decode()
-        return f"data:image/png;base64,{img_str}"
+        # Handle PIL Images
+        if hasattr(image, 'mode'):
+            # Ensure RGB mode
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+        
+        # Convert to base64
+        buffer = io.BytesIO()
+        image.save(buffer, format='JPEG', quality=85, optimize=True)
+        img_str = base64.b64encode(buffer.getvalue()).decode()
+        return f"data:image/jpeg;base64,{img_str}"
     except Exception as e:
-        st.error(f"Error converting image to base64: {e}")
+        print(f"Error converting image to base64: {e}")  # Use print instead of st.error for testing
         return None
 
 def display_image_safe(image, caption="", use_container_width=True, width=None):
@@ -155,7 +189,6 @@ def optimize_image_for_display(image, max_size=(800, 600)):
 def cleanup_memory():
     """Clean up memory to prevent issues on cloud platforms"""
     try:
-        import gc
         gc.collect()
         
         # Clear any large objects from session state if they exist
@@ -207,8 +240,8 @@ model_config = {
 
 # Logo configuration
 logo_config = {
-    "path": "assets/logov1.png",
-    "url": "https://www.dropbox.com/scl/fi/5009uw9qyqusu1fqts6tu/logov1.png?rlkey=sfoxvloqldcnangk56d4hp4qi&st=kmoauecw&dl=1"
+    "path": "logov1.png",  # Logo is now in main directory
+    "url": "https://www.dropbox.com/scl/fi/5009uw9qyqusu1fqts6tu/logov1.png?rlkey=sfoxvloqldcnangk56d4hp4qi&st=kmoauecw&dl=1"  # Fallback URL
 }
 
 # Example images configuration
@@ -271,10 +304,7 @@ def ensure_logo_exists():
     if not os.path.exists(filepath):
         # Download silently without showing messages
         try:
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            
-            # Download without progress bar or messages
+            # Download without progress bar or messages (logo is now in main directory)
             response = requests.get(logo_config["url"], stream=True)
             response.raise_for_status()
             
@@ -410,11 +440,12 @@ if source == "Image" and st.session_state.get("show_upload", False):
     st.markdown("### Upload your Image")
     
     # Single file uploader that handles both regular uploads and example images
-    uploaded_file = st.file_uploader(
+    uploaded_file = safe_file_uploader(
         "Drag and drop your Image here or browse your computer",
         type=["jpg", "jpeg", "png"],
         label_visibility="collapsed",
-        key="main_image_uploader"
+        key="main_image_uploader",
+        max_size_mb=5 if IS_CLOUD else 20  # Smaller limit for cloud platforms
     )
     
     # Check if we have an example image selected
@@ -734,4 +765,67 @@ st.markdown("""
         1. Rehman A, Meraj T, Minhas AM, Imran A, Ali M, Sultani W. A large-scale multi-domain leukemia dataset for the white blood cells detection with morphological attributes for explainability. arXiv. Published May 17, 2024. doi:10.48550/arXiv.2405.10803
     </p>
 </div>
-""", unsafe_allow_html=True) 
+""", unsafe_allow_html=True)
+
+# Configure Streamlit for cloud deployment
+if IS_CLOUD:
+    # Add custom CSS for better cloud performance
+    st.markdown("""
+    <style>
+        .main > div {
+            max-width: 1200px;
+            padding-top: 1rem;
+        }
+        .stFileUploader > div > div > div > div {
+            max-height: 200px;
+        }
+        /* Optimize for mobile on cloud */
+        @media (max-width: 768px) {
+            .main > div {
+                padding-left: 1rem;
+                padding-right: 1rem;
+            }
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+def validate_uploaded_file(uploaded_file, max_size_mb=10):
+    """Validate uploaded file to prevent upload errors"""
+    if uploaded_file is None:
+        return False, "No file uploaded"
+    
+    # Check file size
+    if uploaded_file.size > max_size_mb * 1024 * 1024:
+        return False, f"File size ({uploaded_file.size/1024/1024:.1f}MB) exceeds limit ({max_size_mb}MB)"
+    
+    # Check file type
+    if not uploaded_file.type.startswith('image/'):
+        return False, f"Invalid file type: {uploaded_file.type}"
+    
+    # Check file extension
+    if not uploaded_file.name.lower().endswith(('.jpg', '.jpeg', '.png')):
+        return False, f"Invalid file extension. Only JPG, JPEG, and PNG are allowed."
+    
+    return True, "Valid file"
+
+def safe_file_uploader(label, max_size_mb=10, **kwargs):
+    """Cloud-safe file uploader with error handling"""
+    try:
+        uploaded_file = st.file_uploader(label, **kwargs)
+        
+        if uploaded_file is not None:
+            is_valid, message = validate_uploaded_file(uploaded_file, max_size_mb)
+            if not is_valid:
+                st.error(f"File validation error: {message}")
+                return None
+            
+            # Additional cloud-specific validation
+            if IS_CLOUD and uploaded_file.size > 5 * 1024 * 1024:  # 5MB limit for cloud
+                st.warning("Large file detected. Processing may take longer on cloud platforms.")
+        
+        return uploaded_file
+    except Exception as e:
+        st.error(f"File upload error: {e}")
+        if IS_CLOUD:
+            st.info("💡 **Tip for cloud deployment**: Try uploading a smaller image (< 5MB) or refresh the page and try again.")
+        return None 
