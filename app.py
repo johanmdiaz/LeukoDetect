@@ -1,41 +1,22 @@
 import streamlit as st
-import numpy as np
-import cv2
-from PIL import Image
+import torch
 from ultralytics import YOLO
-import warnings
-import os
+import cv2
+import numpy as np
+from PIL import Image
 import requests
+import os
+import time
+from datetime import datetime
+import tempfile
 from pathlib import Path
-import base64
+import threading
 import io
+import base64
 import gc
+import warnings
 
-# Suppress warnings
-warnings.filterwarnings("ignore")
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-
-# Configuration for cloud deployment
-# Add memory-efficient configuration
-if 'STREAMLIT_SERVER_HEADLESS' in os.environ:
-    # Running on cloud platform
-    gc.collect()
-
-# Debug: Show deployment environment for troubleshooting
-deployment_info = []
-if 'STREAMLIT_SERVER_HEADLESS' in os.environ:
-    deployment_info.append('STREAMLIT_SERVER_HEADLESS')
-if 'RENDER' in os.environ:
-    deployment_info.append('RENDER')
-if 'RENDER_SERVICE_NAME' in os.environ:
-    deployment_info.append('RENDER_SERVICE_NAME')
-if any(key.startswith('RENDER') for key in os.environ.keys()):
-    deployment_info.append('RENDER_ENV_DETECTED')
-
-# Store deployment info for use in display function
-os.environ['DETECTED_DEPLOYMENT'] = ','.join(deployment_info) if deployment_info else 'LOCAL'
-
-# Early cloud detection for configuration
+# Cloud deployment configuration  
 def is_cloud_deployment():
     """Detect if running on cloud platform"""
     cloud_indicators = [
@@ -52,151 +33,201 @@ def is_cloud_deployment():
 # Configure for cloud deployment
 IS_CLOUD = is_cloud_deployment()
 
+# Force cloud mode to ensure base64 encoding (set to True for guaranteed cloud compatibility)
+force_cloud_mode = True
+
 # Cloud-specific Streamlit configuration
-if IS_CLOUD:
-    # Set up config for cloud deployment
-    st.set_page_config(
-        page_title="LeukoDetect - AI-Powered Leukemia Cell Detection",
-        page_icon="🩸",
-        layout="wide",
-        initial_sidebar_state="expanded",
-        # Cloud-specific settings
-        menu_items={
-            'Get Help': 'https://github.com/your-repo/issues',
-            'Report a bug': "https://github.com/your-repo/issues",
-            'About': "LeukoDetect - AI-powered leukemia cell detection using YOLO11"
-        }
-    )
+if IS_CLOUD or force_cloud_mode:
+    # Early detection for enhanced file handling
+    import streamlit as st
+    # Configuration will be handled by .streamlit/config.toml
+    pass
 
 # Utility functions for robust image handling
 def convert_image_to_base64(image):
-    """Convert numpy array or PIL image to base64 data URI for cloud-safe display"""
-    if image is None:
-        return None
-    
+    """Convert numpy array or PIL image to base64 string for reliable display"""
     try:
-        # Handle numpy arrays
+        # Convert numpy array to PIL Image if needed
         if isinstance(image, np.ndarray):
-            # Convert BGR to RGB if needed
-            if len(image.shape) == 3 and image.shape[2] == 3:
-                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            # Ensure correct data type
+            # Ensure the image is in the correct format (0-255, uint8)
             if image.dtype != np.uint8:
                 image = np.clip(image, 0, 255).astype(np.uint8)
-            image = Image.fromarray(image)
+            # Handle different channel orders
+            if len(image.shape) == 3:
+                if image.shape[2] == 3:
+                    # RGB format
+                    image = Image.fromarray(image)
+                elif image.shape[2] == 4:
+                    # RGBA format
+                    image = Image.fromarray(image, 'RGBA')
+            else:
+                # Grayscale
+                image = Image.fromarray(image, 'L')
         
-        # Handle PIL Images
-        if hasattr(image, 'mode'):
-            # Ensure RGB mode
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
+        # Convert PIL Image to base64
+        buffered = io.BytesIO()
+        # Use JPEG for smaller file sizes, PNG for transparency
+        format_type = "PNG" if hasattr(image, 'mode') and 'A' in str(image.mode) else "JPEG"
+        if format_type == "JPEG" and image.mode in ('RGBA', 'LA'):
+            # Convert RGBA to RGB for JPEG
+            bg = Image.new('RGB', image.size, (255, 255, 255))
+            bg.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
+            image = bg
         
-        # Convert to base64
-        buffer = io.BytesIO()
-        image.save(buffer, format='JPEG', quality=85, optimize=True)
-        img_str = base64.b64encode(buffer.getvalue()).decode()
-        return f"data:image/jpeg;base64,{img_str}"
+        image.save(buffered, format=format_type, quality=95 if format_type == "JPEG" else None)
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        return f"data:image/{format_type.lower()};base64,{img_str}"
     except Exception as e:
-        print(f"Error converting image to base64: {e}")  # Use print instead of st.error for testing
+        st.error(f"Error converting image to base64: {e}")
         return None
 
-def display_image_safe(image, caption="", use_container_width=True, width=None):
-    """Safely display image with fallback to base64 encoding"""
-    # Check if we're running on a cloud platform (comprehensive detection)
-    is_cloud_deployment = (
-        'STREAMLIT_SERVER_HEADLESS' in os.environ or 
-        'RENDER' in os.environ or 
-        'RENDER_SERVICE_NAME' in os.environ or
-        'HEROKU' in os.environ or 
-        'VERCEL' in os.environ or
-        'NETLIFY' in os.environ or
-        any(key.startswith('RENDER') for key in os.environ.keys()) or
-        'DYNO' in os.environ or  # Heroku
-        'RAILWAY_' in os.environ or  # Railway
-        'STREAMLIT_SHARING' in os.environ  # Streamlit Cloud
-    )
-    
-    # Force cloud mode for all deployments (can be toggled for debugging)
-    force_cloud_mode = True  # Set to False for local testing with MediaFileManager
-    
-    # For cloud deployments, always use base64 to avoid MediaFileHandler issues
-    if is_cloud_deployment or force_cloud_mode:
-        # Debug info (can be removed in production)
-        # st.info(f"🔧 Using base64 display mode (Cloud: {is_cloud_deployment}, Force: {force_cloud_mode})")
-        
-        try:
-            base64_image = convert_image_to_base64(image)
-            if base64_image:
-                width_style = f"width: {width}px;" if width else "max-width: 100%;"
-                st.markdown(f"""
-                <div style="text-align: center;">
-                    <img src="{base64_image}" style="{width_style} height: auto;" />
-                    <p style="text-align: center; font-size: 14px; color: #666; margin-top: 5px;">{caption}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                return
-            else:
-                st.error("Failed to display image using base64 encoding")
-                return
-        except Exception as e:
-            st.error(f"Failed to display image: {e}")
-            return
-    
-    # For local development, try normal Streamlit display first, then fallback
-    try:
-        # First try normal streamlit image display
-        if width is not None:
-            st.image(image, caption=caption, width=width)
-        else:
-            st.image(image, caption=caption, use_container_width=use_container_width)
-    except Exception as e:
-        # If that fails, try base64 encoding
-        st.warning(f"Using fallback image display method due to: {str(e)[:100]}...")
-        try:
-            base64_image = convert_image_to_base64(image)
-            if base64_image:
-                width_style = f"width: {width}px;" if width else "max-width: 100%;"
-                st.markdown(f"""
-                <div style="text-align: center;">
-                    <img src="{base64_image}" style="{width_style} height: auto;" />
-                    <p style="text-align: center; font-size: 14px; color: #666; margin-top: 5px;">{caption}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.error("Failed to display image")
-        except Exception as fallback_error:
-            st.error(f"Failed to display image: {fallback_error}")
-
-def optimize_image_for_display(image, max_size=(800, 600)):
+def optimize_image_for_display(image, max_width=800, max_height=600):
     """Optimize image size for display to reduce memory usage"""
     try:
         if isinstance(image, np.ndarray):
             h, w = image.shape[:2]
-            if h > max_size[1] or w > max_size[0]:
-                # Calculate new dimensions
-                ratio = min(max_size[0]/w, max_size[1]/h)
-                new_w = int(w * ratio)
-                new_h = int(h * ratio)
-                # Resize image
+            if w > max_width or h > max_height:
+                # Calculate new dimensions maintaining aspect ratio
+                ratio = min(max_width/w, max_height/h)
+                new_w, new_h = int(w * ratio), int(h * ratio)
                 image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
         elif isinstance(image, Image.Image):
-            image.thumbnail(max_size, Image.Resampling.LANCZOS)
+            image.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
         return image
     except Exception as e:
-        st.warning(f"Image optimization failed: {e}")
+        st.warning(f"Could not optimize image: {e}")
         return image
 
+def display_image_safe(image, caption="", use_container_width=True, **kwargs):
+    """Safely display image, using base64 on cloud platforms to avoid MediaFileHandler issues"""
+    try:
+        # Optimize image first to reduce memory usage
+        image = optimize_image_for_display(image)
+        
+        # On cloud platforms or when forced, use base64 encoding
+        if IS_CLOUD or force_cloud_mode:
+            base64_image = convert_image_to_base64(image)
+            if base64_image:
+                # Display using markdown with base64 data URI
+                width_style = "width: 100%;" if use_container_width else ""
+                st.markdown(
+                    f'<div style="text-align: center;"><img src="{base64_image}" style="{width_style} max-width: 100%; height: auto;"><br><small>{caption}</small></div>',
+                    unsafe_allow_html=True
+                )
+                return True
+            else:
+                st.error("Failed to process image for display")
+                return False
+        else:
+            # On local development, try normal Streamlit display first
+            try:
+                st.image(image, caption=caption, use_container_width=use_container_width, **kwargs)
+                return True
+            except Exception as local_error:
+                st.warning(f"Normal display failed, using base64 fallback: {local_error}")
+                # Fallback to base64 even on local if normal display fails
+                base64_image = convert_image_to_base64(image)
+                if base64_image:
+                    width_style = "width: 100%;" if use_container_width else ""
+                    st.markdown(
+                        f'<div style="text-align: center;"><img src="{base64_image}" style="{width_style} max-width: 100%; height: auto;"><br><small>{caption}</small></div>',
+                        unsafe_allow_html=True
+                    )
+                    return True
+                return False
+    except Exception as e:
+        st.error(f"Error displaying image: {e}")
+        return False
+
 def cleanup_memory():
-    """Clean up memory to prevent issues on cloud platforms"""
+    """Perform garbage collection to free memory"""
     try:
         gc.collect()
+        # Clear some session state if it gets too large
+        if hasattr(st.session_state, 'keys'):
+            # Keep important session state, clear temporary data
+            temp_keys = [k for k in st.session_state.keys() if k.startswith('temp_') or k.startswith('cache_')]
+            for key in temp_keys:
+                if key in st.session_state:
+                    del st.session_state[key]
+    except Exception:
+        pass
+
+def validate_uploaded_file(uploaded_file, max_size_mb=10):
+    """Validate uploaded file size and type for cloud compatibility"""
+    if uploaded_file is None:
+        return False, "No file uploaded"
+    
+    # Check file size (cloud platforms typically have smaller limits)
+    file_size_mb = uploaded_file.size / (1024 * 1024)
+    if file_size_mb > max_size_mb:
+        return False, f"File too large ({file_size_mb:.1f}MB). Maximum size allowed: {max_size_mb}MB"
+    
+    # Check file type
+    allowed_types = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
+    file_extension = uploaded_file.name.split('.')[-1].lower()
+    if file_extension not in allowed_types:
+        return False, f"Invalid file type: {file_extension}. Allowed types: {', '.join(allowed_types)}"
+    
+    return True, "File is valid"
+
+def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, help=None, 
+                      on_change=None, args=None, kwargs=None, disabled=False, 
+                      label_visibility="visible", max_size_mb=10):
+    """Cloud-safe file uploader with enhanced error handling and validation"""
+    
+    # Set cloud-optimized default file types if not specified
+    if type is None:
+        type = ["jpg", "jpeg", "png"]
+    
+    try:
+        # Use Streamlit's file uploader with cloud-optimized settings
+        uploaded_file = st.file_uploader(
+            label=label,
+            type=type,
+            accept_multiple_files=accept_multiple_files,
+            key=key,
+            help=help,
+            on_change=on_change,
+            args=args,
+            kwargs=kwargs,
+            disabled=disabled,
+            label_visibility=label_visibility
+        )
         
-        # Clear any large objects from session state if they exist
-        for key in list(st.session_state.keys()):
-            if key.startswith('large_') or key.startswith('temp_'):
-                del st.session_state[key]
+        if uploaded_file is not None:
+            # Validate the uploaded file
+            is_valid, message = validate_uploaded_file(uploaded_file, max_size_mb)
+            
+            if not is_valid:
+                st.error(f"Upload Error: {message}")
+                return None
+            
+            # Show success message for valid uploads
+            if not accept_multiple_files:  # Single file
+                st.success(f"✅ File uploaded successfully: {uploaded_file.name} ({uploaded_file.size/1024:.1f}KB)")
+            
+            return uploaded_file
+        
+        return None
+        
     except Exception as e:
-        pass  # Silently handle cleanup errors
+        # Handle upload errors gracefully
+        error_msg = str(e)
+        if "400" in error_msg or "Bad Request" in error_msg:
+            st.error("❌ Upload failed: File size may be too large or there's a connection issue. Please try a smaller file or refresh the page.")
+        elif "413" in error_msg:
+            st.error("❌ Upload failed: File is too large. Please try a smaller file.")
+        else:
+            st.error(f"❌ Upload failed: {error_msg}")
+        
+        return None
+
+# Suppress warnings
+warnings.filterwarnings("ignore")
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+st.set_page_config(page_title="LeukoDetect Application 🔬", layout="wide")
 
 # Custom CSS for color scheme and button
 st.markdown("""
@@ -241,7 +272,7 @@ model_config = {
 # Logo configuration
 logo_config = {
     "path": "logov1.png",  # Logo is now in main directory
-    "url": "https://www.dropbox.com/scl/fi/5009uw9qyqusu1fqts6tu/logov1.png?rlkey=sfoxvloqldcnangk56d4hp4qi&st=kmoauecw&dl=1"  # Fallback URL
+    "url": "https://www.dropbox.com/scl/fi/5009uw9qyqusu1fqts6tu/logov1.png?rlkey=sfoxvloqldcnangk56d4hp4qi&st=kmoauecw&dl=1"
 }
 
 # Example images configuration
@@ -304,7 +335,10 @@ def ensure_logo_exists():
     if not os.path.exists(filepath):
         # Download silently without showing messages
         try:
-            # Download without progress bar or messages (logo is now in main directory)
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            
+            # Download without progress bar or messages
             response = requests.get(logo_config["url"], stream=True)
             response.raise_for_status()
             
@@ -364,7 +398,7 @@ def ensure_example_image_exists(image_name):
 # Sidebar: Logo (download if necessary)
 with st.sidebar:
     if ensure_logo_exists():
-        display_image_safe(logo_config["path"], width=250)
+        display_image_safe(Image.open(logo_config["path"]), caption="", use_container_width=False)
     else:
         st.warning("Logo could not be loaded")
     st.title("User Configuration")
@@ -383,11 +417,58 @@ def load_model(path):
         st.error(f"Error loading model: {e}")
         return None
 
+# SAHI AutoDetection Model
+@st.cache_resource
+def load_sahi_model(path):
+    """Load SAHI AutoDetection model"""
+    try:
+        from ultralytics.utils.torch_utils import select_device
+        return AutoDetectionModel.from_pretrained(
+            model_type="ultralytics", 
+            model_path=path, 
+            device=select_device('')
+        )
+    except Exception as e:
+        st.error(f"Error loading SAHI model: {e}")
+        return None
+
+def perform_sahi_inference(image_np, sahi_model, conf, slice_width, slice_height, overlap_ratio):
+    """Perform SAHI inference on image"""
+    try:
+        # Convert BGR to RGB for SAHI
+        image_rgb = cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB)
+        
+        # Perform sliced prediction
+        result = get_sliced_prediction(
+            image_rgb,
+            sahi_model,
+            slice_height=slice_height,
+            slice_width=slice_width,
+            overlap_height_ratio=overlap_ratio,
+            overlap_width_ratio=overlap_ratio,
+            postprocess_type="NMS",  # Use NMS for post-processing
+            postprocess_match_threshold=0.5,
+            postprocess_class_agnostic=False
+        )
+        
+        return result
+    except Exception as e:
+        st.error(f"Error during SAHI inference: {e}")
+        return None
+
+def safe_extract_tensor_value(tensor_like_obj):
+    """Safely extract value from tensor or non-tensor object"""
+    if hasattr(tensor_like_obj, 'cpu'):
+        return tensor_like_obj.cpu().numpy()
+    else:
+        return tensor_like_obj
+
 # Ensure model exists and load it
 if ensure_model_exists(model_name):
     model = load_model(model_config[model_name]["path"])
     if model is None:
         st.stop()
+    
 else:
     st.stop()
 
@@ -419,6 +500,35 @@ else:
 conf = float(st.sidebar.slider("Confidence Threshold", 0.0, 1.0, 0.25, 0.01))
 iou = float(st.sidebar.slider("IoU Threshold", 0.0, 1.0, 0.45, 0.01))
 
+# SAHI Configuration (only for images)
+sahi_model = None
+if source == "Image":
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔍 SAHI Configuration")
+    st.sidebar.markdown("*For better detection of small objects*")
+    
+    enable_sahi = st.sidebar.toggle("Enable SAHI", value=False, help="Use SAHI for sliced inference to detect small objects better")
+    
+    if enable_sahi:
+        slice_width = st.sidebar.slider("Slice Width", 256, 1024, 512, 64, help="Width of each slice for SAHI inference")
+        slice_height = st.sidebar.slider("Slice Height", 256, 1024, 512, 64, help="Height of each slice for SAHI inference")
+        overlap_ratio = st.sidebar.slider("Overlap Ratio", 0.1, 0.9, 0.2, 0.1, help="Overlap ratio between slices")
+        
+        # Load SAHI model when enabled
+        sahi_model = load_sahi_model(model_config[model_name]["path"])
+        if sahi_model is None:
+            st.warning("Failed to load SAHI model. Falling back to regular inference.")
+            enable_sahi = False
+    else:
+        slice_width = 512
+        slice_height = 512
+        overlap_ratio = 0.2
+else:
+    enable_sahi = False
+    slice_width = 512
+    slice_height = 512
+    overlap_ratio = 0.2
+
 # Sidebar: Start button for Image source sets session state
 if source == "Image":
     if st.sidebar.button("Start", key="start_image"):
@@ -445,7 +555,7 @@ if source == "Image" and st.session_state.get("show_upload", False):
         type=["jpg", "jpeg", "png"],
         label_visibility="collapsed",
         key="main_image_uploader",
-        max_size_mb=5 if IS_CLOUD else 20  # Smaller limit for cloud platforms
+        max_size_mb=10
     )
     
     # Check if we have an example image selected
@@ -457,11 +567,9 @@ if source == "Image" and st.session_state.get("show_upload", False):
         if "uploaded_example" in st.session_state:
             del st.session_state["uploaded_example"]
         
-        # Process regular upload
+        # Process regular upload - FIRST OCCURRENCE
         st.write(f"**{uploaded_file.name}**  {uploaded_file.size/1024:.1f}KB")
         image = Image.open(uploaded_file)
-        # Optimize image for display
-        image = optimize_image_for_display(image)
         image_np = np.array(image)
         image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
         
@@ -469,19 +577,70 @@ if source == "Image" and st.session_state.get("show_upload", False):
         with col1:
             display_image_safe(image, caption="Original Image", use_container_width=True)
         
-        # Inference
-        results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
-        result = results[0]
-        annotated_frame = result.plot()
-        annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-        # Optimize annotated frame for display
-        annotated_frame = optimize_image_for_display(annotated_frame)
+        # Inference with SAHI or regular YOLO
+        if enable_sahi and sahi_model is not None:
+            st.info("🔍 Using SAHI for enhanced small object detection...")
+            sahi_result = perform_sahi_inference(image_np, sahi_model, conf, slice_width, slice_height, overlap_ratio)
+            
+            if sahi_result is not None:
+                # Convert SAHI result to display format with bounding boxes
+                import tempfile
+                import os
+                
+                # Create temporary file to save the annotated image
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                    temp_path = tmp_file.name
+                
+                # Export the visualization with bounding boxes
+                sahi_result.export_visuals(export_dir=os.path.dirname(temp_path), 
+                                         file_name=os.path.basename(temp_path).replace('.png', ''),
+                                         hide_labels=False,
+                                         hide_conf=False)
+                
+                # Read the annotated image
+                annotated_frame = cv2.imread(temp_path)
+                if annotated_frame is not None:
+                    annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+                else:
+                    # Fallback to original image if visualization fails
+                    annotated_frame = sahi_result.image
+                
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+                
+                # Create a mock result object for consistency with the rest of the code
+                import torch
+                class MockResult:
+                    def __init__(self, sahi_result, class_names):
+                        self.boxes = []
+                        self.names = {i: name for i, name in enumerate(class_names)}
+                        
+                        # Convert SAHI detections to boxes format
+                        for detection in sahi_result.object_prediction_list:
+                            box_info = type('Box', (), {})()
+                            # Create tensor-like objects that have .cpu().numpy() methods
+                            box_info.cls = [torch.tensor(detection.category.id)]
+                            box_info.conf = [torch.tensor(detection.score.value)]
+                            self.boxes.append(box_info)
+                
+                result = MockResult(sahi_result, class_names)
+            else:
+                st.warning("SAHI inference failed. Using regular inference...")
+                results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
+                result = results[0]
+                annotated_frame = result.plot()
+                annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+        else:
+            results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
+            result = results[0]
+            annotated_frame = result.plot()
+            annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
         
         with col2:
             display_image_safe(annotated_frame, caption="Inference Result", use_container_width=True)
-        
-        # Clean up memory after processing
-        cleanup_memory()
         
         # Results table
         if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
@@ -495,8 +654,8 @@ if source == "Image" and st.session_state.get("show_upload", False):
                 </tr>
             """
             for box in result.boxes:
-                cls = int(box.cls[0].cpu().numpy())
-                conf_score = float(box.conf[0].cpu().numpy())
+                cls = int(safe_extract_tensor_value(box.cls[0]))
+                conf_score = float(safe_extract_tensor_value(box.conf[0]))
                 class_name = result.names[cls]
                 results_md += f"<tr><td style='padding:8px;'>{class_name}</td><td style='padding:8px;'>{conf_score*100:.2f}%</td></tr>"
             results_md += "</table></div>"
@@ -517,8 +676,6 @@ if source == "Image" and st.session_state.get("show_upload", False):
         # Process example image
         st.write(f"**{example_file['name']}** (Example Image)")
         image = example_file["image"]
-        # Optimize image for display
-        image = optimize_image_for_display(image)
         image_np = np.array(image)
         image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
         
@@ -526,19 +683,70 @@ if source == "Image" and st.session_state.get("show_upload", False):
         with col1:
             display_image_safe(image, caption="Original Image", use_container_width=True)
         
-        # Inference
-        results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
-        result = results[0]
-        annotated_frame = result.plot()
-        annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-        # Optimize annotated frame for display
-        annotated_frame = optimize_image_for_display(annotated_frame)
+        # Inference with SAHI or regular YOLO
+        if enable_sahi and sahi_model is not None:
+            st.info("🔍 Using SAHI for enhanced small object detection...")
+            sahi_result = perform_sahi_inference(image_np, sahi_model, conf, slice_width, slice_height, overlap_ratio)
+            
+            if sahi_result is not None:
+                # Convert SAHI result to display format with bounding boxes
+                import tempfile
+                import os
+                
+                # Create temporary file to save the annotated image
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                    temp_path = tmp_file.name
+                
+                # Export the visualization with bounding boxes
+                sahi_result.export_visuals(export_dir=os.path.dirname(temp_path), 
+                                         file_name=os.path.basename(temp_path).replace('.png', ''),
+                                         hide_labels=False,
+                                         hide_conf=False)
+                
+                # Read the annotated image
+                annotated_frame = cv2.imread(temp_path)
+                if annotated_frame is not None:
+                    annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+                else:
+                    # Fallback to original image if visualization fails
+                    annotated_frame = sahi_result.image
+                
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
+                
+                # Create a mock result object for consistency with the rest of the code
+                import torch
+                class MockResult:
+                    def __init__(self, sahi_result, class_names):
+                        self.boxes = []
+                        self.names = {i: name for i, name in enumerate(class_names)}
+                        
+                        # Convert SAHI detections to boxes format
+                        for detection in sahi_result.object_prediction_list:
+                            box_info = type('Box', (), {})()
+                            # Create tensor-like objects that have .cpu().numpy() methods
+                            box_info.cls = [torch.tensor(detection.category.id)]
+                            box_info.conf = [torch.tensor(detection.score.value)]
+                            self.boxes.append(box_info)
+                
+                result = MockResult(sahi_result, class_names)
+            else:
+                st.warning("SAHI inference failed. Using regular inference...")
+                results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
+                result = results[0]
+                annotated_frame = result.plot()
+                annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+        else:
+            results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
+            result = results[0]
+            annotated_frame = result.plot()
+            annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
         
         with col2:
             display_image_safe(annotated_frame, caption="Inference Result", use_container_width=True)
-        
-        # Clean up memory after processing
-        cleanup_memory()
         
         # Results table
         if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
@@ -552,8 +760,8 @@ if source == "Image" and st.session_state.get("show_upload", False):
                 </tr>
             """
             for box in result.boxes:
-                cls = int(box.cls[0].cpu().numpy())
-                conf_score = float(box.conf[0].cpu().numpy())
+                cls = int(safe_extract_tensor_value(box.cls[0]))
+                conf_score = float(safe_extract_tensor_value(box.conf[0]))
                 class_name = result.names[cls]
                 results_md += f"<tr><td style='padding:8px;'>{class_name}</td><td style='padding:8px;'>{conf_score*100:.2f}%</td></tr>"
             results_md += "</table></div>"
@@ -590,7 +798,7 @@ if source == "Image" and st.session_state.get("show_upload", False):
             # Center the image
             col_img1, col_img2, col_img3 = st.columns([0.5, 1, 0.5])
             with col_img2:
-                display_image_safe(example_image, width=160)
+                st.image(example_image, width=160)
             
             # Compact button with reduced spacing and smaller size
             st.markdown("<div style='margin-top: -10px;'></div>", unsafe_allow_html=True)
@@ -619,7 +827,7 @@ if source == "Image" and st.session_state.get("show_upload", False):
             # Center the image
             col_img1, col_img2, col_img3 = st.columns([0.5, 1, 0.5])
             with col_img2:
-                display_image_safe(example_image, width=160)
+                st.image(example_image, width=160)
             
             # Compact button with reduced spacing and smaller size
             st.markdown("<div style='margin-top: -10px;'></div>", unsafe_allow_html=True)
@@ -765,67 +973,4 @@ st.markdown("""
         1. Rehman A, Meraj T, Minhas AM, Imran A, Ali M, Sultani W. A large-scale multi-domain leukemia dataset for the white blood cells detection with morphological attributes for explainability. arXiv. Published May 17, 2024. doi:10.48550/arXiv.2405.10803
     </p>
 </div>
-""", unsafe_allow_html=True)
-
-# Configure Streamlit for cloud deployment
-if IS_CLOUD:
-    # Add custom CSS for better cloud performance
-    st.markdown("""
-    <style>
-        .main > div {
-            max-width: 1200px;
-            padding-top: 1rem;
-        }
-        .stFileUploader > div > div > div > div {
-            max-height: 200px;
-        }
-        /* Optimize for mobile on cloud */
-        @media (max-width: 768px) {
-            .main > div {
-                padding-left: 1rem;
-                padding-right: 1rem;
-            }
-        }
-    </style>
-    """, unsafe_allow_html=True)
-
-def validate_uploaded_file(uploaded_file, max_size_mb=10):
-    """Validate uploaded file to prevent upload errors"""
-    if uploaded_file is None:
-        return False, "No file uploaded"
-    
-    # Check file size
-    if uploaded_file.size > max_size_mb * 1024 * 1024:
-        return False, f"File size ({uploaded_file.size/1024/1024:.1f}MB) exceeds limit ({max_size_mb}MB)"
-    
-    # Check file type
-    if not uploaded_file.type.startswith('image/'):
-        return False, f"Invalid file type: {uploaded_file.type}"
-    
-    # Check file extension
-    if not uploaded_file.name.lower().endswith(('.jpg', '.jpeg', '.png')):
-        return False, f"Invalid file extension. Only JPG, JPEG, and PNG are allowed."
-    
-    return True, "Valid file"
-
-def safe_file_uploader(label, max_size_mb=10, **kwargs):
-    """Cloud-safe file uploader with error handling"""
-    try:
-        uploaded_file = st.file_uploader(label, **kwargs)
-        
-        if uploaded_file is not None:
-            is_valid, message = validate_uploaded_file(uploaded_file, max_size_mb)
-            if not is_valid:
-                st.error(f"File validation error: {message}")
-                return None
-            
-            # Additional cloud-specific validation
-            if IS_CLOUD and uploaded_file.size > 5 * 1024 * 1024:  # 5MB limit for cloud
-                st.warning("Large file detected. Processing may take longer on cloud platforms.")
-        
-        return uploaded_file
-    except Exception as e:
-        st.error(f"File upload error: {e}")
-        if IS_CLOUD:
-            st.info("💡 **Tip for cloud deployment**: Try uploading a smaller image (< 5MB) or refresh the page and try again.")
-        return None 
+""", unsafe_allow_html=True) 
