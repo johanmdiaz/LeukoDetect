@@ -905,70 +905,225 @@ elif source == "Video":
             os.unlink(video_path)
 
 elif source == "Webcam":
-    # Check if running on Streamlit Cloud (no webcam available)
-    if 'STREAMLIT_CLOUD' in os.environ or not os.path.exists('/dev/video0'):
-        st.warning("⚠️ Webcam is not available on Streamlit Cloud")
+    # Improved cloud detection
+    is_cloud_deployment = any([
+        'STREAMLIT_CLOUD' in os.environ,
+        'STREAMLIT_SHARING' in os.environ,
+        'RENDER' in os.environ,
+        'HEROKU' in os.environ,
+        'VERCEL' in os.environ,
+        'streamlit.io' in os.getenv('SERVER_NAME', ''),
+        IS_CLOUD or force_cloud_mode
+    ])
+    
+    if is_cloud_deployment:
+        st.warning("⚠️ Webcam is not available on cloud deployments")
         st.info("""
+        **🎥 Webcam functionality requires local deployment**
+        
         **Alternative solutions:**
-        1. **Use Image Upload**: Switch to 'Image' source for single image analysis
-        2. **Use Video Upload**: Switch to 'Video' source to upload and analyze video files
-        3. **Run Locally**: Download and run this app locally to access your webcam
+        1. **📸 Use Image Upload**: Switch to 'Image' source for single image analysis
+        2. **🎬 Use Video Upload**: Switch to 'Video' source to upload and analyze video files
+        3. **💻 Run Locally**: Download and run this app locally to access your webcam
         
         **To run locally:**
         ```bash
-        git clone <repository-url>
-        cd leukodetect
+        git clone https://github.com/johanmdiaz/LeukoDetect
+        cd LeukoDetect
         pip install -r requirements.txt
         streamlit run app.py
         ```
+        
+        **📱 Alternative: Use Streamlit Camera Input**
+        You can also use the built-in camera input for single photos (though not real-time):
         """)
-    else:
-        if st.sidebar.button("Start Webcam", key="start_webcam"):
-            # Create columns for webcam display
+        
+        # Alternative: Camera input for single photos
+        st.markdown("### 📷 Single Photo Capture")
+        picture = st.camera_input("Take a picture for analysis")
+        
+        if picture is not None:
+            # Process the captured image
+            image = Image.open(picture)
+            image_np = np.array(image)
+            image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
+            
             col1, col2 = st.columns(2)
-            org_frame = col1.empty()
-            ann_frame = col2.empty()
+            with col1:
+                display_image_safe(image, caption="Captured Image", use_container_width=True)
             
-            # Create stop button
-            stop_button = st.button("Stop Webcam")
+            # Inference
+            results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
+            result = results[0]
+            annotated_frame = result.plot()
+            annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
             
-            # Start webcam capture with error handling
-            cap = cv2.VideoCapture(0)  # Use webcam index 0
+            with col2:
+                display_image_safe(annotated_frame, caption="Analysis Result", use_container_width=True)
+            
+            # Results table
+            if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
+                results_md = """
+                <div style='margin-top:30px;'>
+                <h4 style='color:#155a5a;'>Detection Results</h4>
+                <table style='width:60%;margin:auto;border-collapse:collapse;'>
+                    <tr style='background-color:#f2f2f2;'>
+                        <th style='padding:8px;text-align:left;'>Class</th>
+                        <th style='padding:8px;text-align:left;'>Confidence</th>
+                    </tr>
+                """
+                for box in result.boxes:
+                    cls = int(safe_extract_tensor_value(box.cls[0]))
+                    conf_score = float(safe_extract_tensor_value(box.conf[0]))
+                    class_name = result.names[cls]
+                    results_md += f"<tr><td style='padding:8px;'>{class_name}</td><td style='padding:8px;'>{conf_score*100:.2f}%</td></tr>"
+                results_md += "</table></div>"
+                st.markdown(results_md, unsafe_allow_html=True)
+            else:
+                st.info("No objects detected in this image.")
+    else:
+        # Local deployment - full webcam functionality
+        st.markdown("### 🎥 Real-time Webcam Analysis")
+        
+        # Initialize webcam session state
+        if "webcam_running" not in st.session_state:
+            st.session_state.webcam_running = False
+        
+        # Control buttons
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("▶️ Start Webcam", key="start_webcam", disabled=st.session_state.webcam_running):
+                st.session_state.webcam_running = True
+                st.rerun()
+        
+        with col2:
+            if st.button("⏸️ Stop Webcam", key="stop_webcam", disabled=not st.session_state.webcam_running):
+                st.session_state.webcam_running = False
+                st.rerun()
+        
+        with col3:
+            # Frame rate control
+            fps_limit = st.selectbox("FPS Limit", [5, 10, 15, 20, 30], index=1, help="Lower FPS reduces CPU usage")
+        
+        # Display webcam feed
+        if st.session_state.webcam_running:
+            # Create placeholders for frames
+            col1, col2 = st.columns(2)
+            org_frame_placeholder = col1.empty()
+            ann_frame_placeholder = col2.empty()
+            
+            # Status indicators
+            status_col1, status_col2 = st.columns(2)
+            fps_display = status_col1.empty()
+            detection_count = status_col2.empty()
+            
+            # Try to initialize webcam
+            cap = cv2.VideoCapture(0)
+            
+            # Set webcam properties for better performance
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, fps_limit)
             
             if not cap.isOpened():
-                st.error("Could not open webcam. Please verify the webcam is connected properly.")
+                st.error("❌ Could not open webcam. Please check:")
+                st.markdown("""
+                - Webcam is connected and not being used by another application
+                - Camera permissions are granted to your browser/system
+                - Try refreshing the page and starting again
+                """)
+                st.session_state.webcam_running = False
             else:
+                st.success("✅ Webcam connected successfully!")
+                
+                # Frame processing variables
+                frame_count = 0
+                import time
+                start_time = time.time()
+                frame_skip = max(1, 30 // fps_limit)  # Skip frames to achieve target FPS
+                
                 try:
-                    while cap.isOpened() and not stop_button:
+                    # Main webcam loop
+                    while st.session_state.webcam_running:
                         success, frame = cap.read()
+                        
                         if not success:
-                            st.warning("Failed to read frame from webcam.")
-                            break
+                            st.warning("⚠️ Failed to read frame from webcam.")
+                            time.sleep(0.1)  # Brief pause before retrying
+                            continue
+                        
+                        frame_count += 1
+                        
+                        # Skip frames for FPS control
+                        if frame_count % frame_skip != 0:
+                            continue
                         
                         # Process frame with model
-                        if enable_trk == "Yes":
-                            results = model.track(
-                                frame, conf=conf, iou=iou, classes=selected_inds, persist=True
-                            )
-                        else:
-                            results = model(frame, conf=conf, iou=iou, classes=selected_inds)
+                        try:
+                            if enable_trk == "Yes":
+                                results = model.track(
+                                    frame, conf=conf, iou=iou, classes=selected_inds, persist=True
+                                )
+                            else:
+                                results = model(frame, conf=conf, iou=iou, classes=selected_inds)
+                            
+                            # Get the first result
+                            result = results[0]
+                            annotated_frame = result.plot()
+                            
+                            # Convert frames for display
+                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            annotated_frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+                            
+                            # Display frames using safe display method
+                            org_frame_placeholder.image(frame_rgb, caption="📹 Live Webcam Feed", use_container_width=True)
+                            ann_frame_placeholder.image(annotated_frame_rgb, caption="🔍 Detection Results", use_container_width=True)
+                            
+                            # Calculate and display FPS
+                            current_time = time.time()
+                            elapsed_time = current_time - start_time
+                            if elapsed_time > 0:
+                                current_fps = frame_count / elapsed_time
+                                fps_display.metric("FPS", f"{current_fps:.1f}")
+                            
+                            # Count detections
+                            if hasattr(result, 'boxes') and result.boxes is not None:
+                                detection_count.metric("Detections", len(result.boxes))
+                            else:
+                                detection_count.metric("Detections", 0)
+                            
+                        except Exception as model_error:
+                            st.error(f"Model processing error: {model_error}")
+                            continue
                         
-                        # Get the first result
-                        result = results[0]
-                        annotated_frame = result.plot()
+                        # Small delay to prevent overwhelming the system
+                        time.sleep(1.0 / fps_limit)
                         
-                        # Display frames
-                        org_frame.image(frame, channels="BGR", caption="Original Webcam")
-                        ann_frame.image(annotated_frame, channels="BGR", caption="Inference Result")
-                        
-                        # Check for stop button
-                        if stop_button:
+                        # Check if stop was pressed (session state updated)
+                        if not st.session_state.webcam_running:
                             break
+                
                 except Exception as e:
-                    st.error(f"Webcam error: {str(e)}")
+                    st.error(f"🚨 Webcam error: {str(e)}")
+                    st.info("💡 Try restarting the webcam or refreshing the page.")
+                
                 finally:
+                    # Always release the webcam
                     cap.release()
                     cv2.destroyAllWindows()
+                    st.session_state.webcam_running = False
+                    st.info("📴 Webcam stopped.")
+        
+        else:
+            st.info("🎥 Click '▶️ Start Webcam' to begin real-time analysis.")
+            st.markdown("""
+            **💡 Tips for best performance:**
+            - Close other applications using the webcam
+            - Use lower FPS settings for better performance
+            - Ensure good lighting for better detection
+            - Position the webcam steadily for tracking
+            """)
 
 # Footer with information about LeukoDetect
 st.markdown("---")
