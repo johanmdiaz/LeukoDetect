@@ -153,7 +153,7 @@ def cleanup_memory():
     except Exception:
         pass
 
-def validate_uploaded_file(uploaded_file, max_size_mb=10):
+def validate_uploaded_file(uploaded_file, max_size_mb=3):
     """Validate uploaded file size and type for cloud compatibility"""
     if uploaded_file is None:
         return False, "No file uploaded"
@@ -173,20 +173,34 @@ def validate_uploaded_file(uploaded_file, max_size_mb=10):
 
 def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, help=None, 
                       on_change=None, args=None, kwargs=None, disabled=False, 
-                      label_visibility="visible", max_size_mb=10):
-    """Cloud-safe file uploader with enhanced error handling and validation"""
+                      label_visibility="visible", max_size_mb=3):
+    """Cloud-safe file uploader with enhanced error handling and retry logic"""
     
     # Set cloud-optimized default file types if not specified
     if type is None:
         type = ["jpg", "jpeg", "png"]
     
+    # Create a unique key for retry attempts
+    retry_key = f"{key}_retry_count" if key else "upload_retry_count"
+    
+    # Initialize retry counter in session state
+    if retry_key not in st.session_state:
+        st.session_state[retry_key] = 0
+    
+    # Maximum retry attempts
+    max_retries = 3
+    
     try:
+        # Show retry information if needed
+        if st.session_state[retry_key] > 0:
+            st.info(f"🔄 Upload attempt {st.session_state[retry_key] + 1} of {max_retries + 1}")
+        
         # Use Streamlit's file uploader with cloud-optimized settings
         uploaded_file = st.file_uploader(
             label=label,
             type=type,
             accept_multiple_files=accept_multiple_files,
-            key=key,
+            key=f"{key}_{st.session_state[retry_key]}" if key else None,  # Unique key for each retry
             help=help,
             on_change=on_change,
             args=args,
@@ -203,6 +217,9 @@ def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, 
                 st.error(f"Upload Error: {message}")
                 return None
             
+            # Reset retry counter on successful upload
+            st.session_state[retry_key] = 0
+            
             # Show success message for valid uploads
             if not accept_multiple_files:  # Single file
                 st.success(f"✅ File uploaded successfully: {uploaded_file.name} ({uploaded_file.size/1024:.1f}KB)")
@@ -212,14 +229,38 @@ def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, 
         return None
         
     except Exception as e:
-        # Handle upload errors gracefully
-        error_msg = str(e)
-        if "400" in error_msg or "Bad Request" in error_msg:
-            st.error("❌ Upload failed: File size may be too large or there's a connection issue. Please try a smaller file or refresh the page.")
+        # Handle upload errors gracefully with retry logic
+        error_msg = str(e).lower()
+        
+        if any(code in error_msg for code in ["400", "bad request", "network error", "timeout"]):
+            st.session_state[retry_key] += 1
+            
+            if st.session_state[retry_key] <= max_retries:
+                # Show retry option
+                st.error(f"❌ Upload failed (attempt {st.session_state[retry_key]}): Network error or file too large.")
+                st.warning("💡 **Possible solutions:**")
+                st.markdown("- Try a **smaller image** (under 1MB)")
+                st.markdown("- **Refresh the page** and try again")
+                st.markdown("- **Compress your image** before uploading")
+                
+                # Auto-retry button
+                if st.button("🔄 Retry Upload", key=f"retry_{key}_{st.session_state[retry_key]}"):
+                    st.rerun()
+                
+                return None
+            else:
+                # Max retries reached - offer alternative solution
+                st.error("❌ **Upload failed after multiple attempts.** This is a known issue with cloud deployments.")
+                st.warning("🛠️ **Alternative Solution:** Try using a smaller image (under 1MB) or contact support.")
+                
+                # Reset retry counter
+                st.session_state[retry_key] = 0
+                return None
+        
         elif "413" in error_msg:
-            st.error("❌ Upload failed: File is too large. Please try a smaller file.")
+            st.error("❌ Upload failed: File is too large. Please try a smaller file (under 1MB).")
         else:
-            st.error(f"❌ Upload failed: {error_msg}")
+            st.error(f"❌ Upload failed: {e}")
         
         return None
 
@@ -555,7 +596,7 @@ if source == "Image" and st.session_state.get("show_upload", False):
         type=["jpg", "jpeg", "png"],
         label_visibility="collapsed",
         key="main_image_uploader",
-        max_size_mb=10
+        max_size_mb=3
     )
     
     # Check if we have an example image selected
