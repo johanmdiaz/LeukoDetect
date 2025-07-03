@@ -7,12 +7,108 @@ import warnings
 import os
 import requests
 from pathlib import Path
+import base64
+import io
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-st.set_page_config(page_title="LeukoDetect Application 🔬", layout="wide")
+# Configuration for cloud deployment
+# Add memory-efficient configuration
+if 'STREAMLIT_SERVER_HEADLESS' in os.environ:
+    # Running on cloud platform
+    import gc
+    gc.collect()
+
+st.set_page_config(
+    page_title="LeukoDetect Application 🔬", 
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': 'https://github.com/your-repo/issues',
+        'Report a bug': "https://github.com/your-repo/issues",
+        'About': "# LeukoDetect Application\nLeukemia cell detection using YOLO11"
+    }
+)
+
+# Utility functions for robust image handling
+def convert_image_to_base64(image):
+    """Convert numpy array or PIL image to base64 string for reliable display"""
+    try:
+        # Convert numpy array to PIL Image if needed
+        if isinstance(image, np.ndarray):
+            # Ensure the image is in the correct format (0-255, uint8)
+            if image.dtype != np.uint8:
+                image = np.clip(image, 0, 255).astype(np.uint8)
+            image = Image.fromarray(image)
+        
+        # Convert PIL Image to base64
+        buffered = io.BytesIO()
+        image.save(buffered, format="PNG")
+        img_str = base64.b64encode(buffered.getvalue()).decode()
+        return f"data:image/png;base64,{img_str}"
+    except Exception as e:
+        st.error(f"Error converting image to base64: {e}")
+        return None
+
+def display_image_safe(image, caption="", use_container_width=True, width=None):
+    """Safely display image with fallback to base64 encoding"""
+    try:
+        # First try normal streamlit image display
+        if width is not None:
+            st.image(image, caption=caption, width=width)
+        else:
+            st.image(image, caption=caption, use_container_width=use_container_width)
+    except Exception as e:
+        # If that fails, try base64 encoding
+        st.warning(f"Using fallback image display method due to: {str(e)[:100]}...")
+        try:
+            base64_image = convert_image_to_base64(image)
+            if base64_image:
+                width_style = f"width: {width}px;" if width else "max-width: 100%;"
+                st.markdown(f"""
+                <div style="text-align: center;">
+                    <img src="{base64_image}" style="{width_style} height: auto;" />
+                    <p style="text-align: center; font-size: 14px; color: #666; margin-top: 5px;">{caption}</p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.error("Failed to display image")
+        except Exception as fallback_error:
+            st.error(f"Failed to display image: {fallback_error}")
+
+def optimize_image_for_display(image, max_size=(800, 600)):
+    """Optimize image size for display to reduce memory usage"""
+    try:
+        if isinstance(image, np.ndarray):
+            h, w = image.shape[:2]
+            if h > max_size[1] or w > max_size[0]:
+                # Calculate new dimensions
+                ratio = min(max_size[0]/w, max_size[1]/h)
+                new_w = int(w * ratio)
+                new_h = int(h * ratio)
+                # Resize image
+                image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        elif isinstance(image, Image.Image):
+            image.thumbnail(max_size, Image.Resampling.LANCZOS)
+        return image
+    except Exception as e:
+        st.warning(f"Image optimization failed: {e}")
+        return image
+
+def cleanup_memory():
+    """Clean up memory to prevent issues on cloud platforms"""
+    try:
+        import gc
+        gc.collect()
+        
+        # Clear any large objects from session state if they exist
+        for key in list(st.session_state.keys()):
+            if key.startswith('large_') or key.startswith('temp_'):
+                del st.session_state[key]
+    except Exception as e:
+        pass  # Silently handle cleanup errors
 
 # Custom CSS for color scheme and button
 st.markdown("""
@@ -183,7 +279,7 @@ def ensure_example_image_exists(image_name):
 # Sidebar: Logo (download if necessary)
 with st.sidebar:
     if ensure_logo_exists():
-        st.image(logo_config["path"], width=250)
+        display_image_safe(logo_config["path"], width=250)
     else:
         st.warning("Logo could not be loaded")
     st.title("User Configuration")
@@ -278,21 +374,28 @@ if source == "Image" and st.session_state.get("show_upload", False):
         # Process regular upload
         st.write(f"**{uploaded_file.name}**  {uploaded_file.size/1024:.1f}KB")
         image = Image.open(uploaded_file)
+        # Optimize image for display
+        image = optimize_image_for_display(image)
         image_np = np.array(image)
         image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
         
         col1, col2 = st.columns(2)
         with col1:
-            st.image(image, caption="Original Image", use_container_width=True)
+            display_image_safe(image, caption="Original Image", use_container_width=True)
         
         # Inference
         results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
         result = results[0]
         annotated_frame = result.plot()
         annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+        # Optimize annotated frame for display
+        annotated_frame = optimize_image_for_display(annotated_frame)
         
         with col2:
-            st.image(annotated_frame, caption="Inference Result", use_container_width=True)
+            display_image_safe(annotated_frame, caption="Inference Result", use_container_width=True)
+        
+        # Clean up memory after processing
+        cleanup_memory()
         
         # Results table
         if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
@@ -328,21 +431,28 @@ if source == "Image" and st.session_state.get("show_upload", False):
         # Process example image
         st.write(f"**{example_file['name']}** (Example Image)")
         image = example_file["image"]
+        # Optimize image for display
+        image = optimize_image_for_display(image)
         image_np = np.array(image)
         image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
         
         col1, col2 = st.columns(2)
         with col1:
-            st.image(image, caption="Original Image", use_container_width=True)
+            display_image_safe(image, caption="Original Image", use_container_width=True)
         
         # Inference
         results = model(image_np, conf=conf, iou=iou, classes=selected_inds)
         result = results[0]
         annotated_frame = result.plot()
         annotated_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+        # Optimize annotated frame for display
+        annotated_frame = optimize_image_for_display(annotated_frame)
         
         with col2:
-            st.image(annotated_frame, caption="Inference Result", use_container_width=True)
+            display_image_safe(annotated_frame, caption="Inference Result", use_container_width=True)
+        
+        # Clean up memory after processing
+        cleanup_memory()
         
         # Results table
         if hasattr(result, 'boxes') and result.boxes is not None and len(result.boxes) > 0:
@@ -394,7 +504,7 @@ if source == "Image" and st.session_state.get("show_upload", False):
             # Center the image
             col_img1, col_img2, col_img3 = st.columns([0.5, 1, 0.5])
             with col_img2:
-                st.image(example_image, width=160)
+                display_image_safe(example_image, width=160)
             
             # Compact button with reduced spacing and smaller size
             st.markdown("<div style='margin-top: -10px;'></div>", unsafe_allow_html=True)
@@ -423,7 +533,7 @@ if source == "Image" and st.session_state.get("show_upload", False):
             # Center the image
             col_img1, col_img2, col_img3 = st.columns([0.5, 1, 0.5])
             with col_img2:
-                st.image(example_image, width=160)
+                display_image_safe(example_image, width=160)
             
             # Compact button with reduced spacing and smaller size
             st.markdown("<div style='margin-top: -10px;'></div>", unsafe_allow_html=True)
