@@ -16,6 +16,13 @@ import base64
 import gc
 import warnings
 
+# Fix Ultralytics config directory warning for cloud deployments
+if not os.environ.get('YOLO_CONFIG_DIR'):
+    # Set to a writable directory (temp dir or current working directory)
+    config_dir = os.path.join(tempfile.gettempdir(), 'ultralytics_config')
+    os.makedirs(config_dir, exist_ok=True)
+    os.environ['YOLO_CONFIG_DIR'] = config_dir
+
 # Cloud deployment configuration  
 def is_cloud_deployment():
     """Detect if running on cloud platform"""
