@@ -220,8 +220,12 @@ def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, 
     # Create a unique key for retry attempts
     retry_key = f"{key}_retry_count" if key else "upload_retry_count"
     
-    # Initialize retry counter in session state
-    if retry_key not in st.session_state:
+    # Initialize retry counter in session state - with better error handling
+    try:
+        if retry_key not in st.session_state:
+            st.session_state[retry_key] = 0
+    except Exception:
+        # Fallback initialization if session state access fails
         st.session_state[retry_key] = 0
     
     # Proactive cleanup before first attempt to prevent session conflicts
@@ -234,15 +238,16 @@ def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, 
     
     try:
         # Show retry information if needed
-        if st.session_state[retry_key] > 0:
-            st.info(f"🔄 Upload attempt {st.session_state[retry_key] + 1} of {max_retries + 1}")
+        retry_count = st.session_state.get(retry_key, 0)
+        if retry_count > 0:
+            st.info(f"🔄 Upload attempt {retry_count + 1} of {max_retries + 1}")
         
         # Use Streamlit's file uploader with cloud-optimized settings
         uploaded_file = st.file_uploader(
             label=label,
             type=type,
             accept_multiple_files=accept_multiple_files,
-            key=f"{key}_{st.session_state[retry_key]}" if key else None,  # Unique key for each retry
+            key=f"{key}_{retry_count}" if key else None,  # Unique key for each retry
             help=help,
             on_change=on_change,
             args=args,
@@ -278,18 +283,20 @@ def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, 
         error_msg = str(e).lower()
         
         if any(code in error_msg for code in ["400", "bad request", "network error", "timeout"]):
-            st.session_state[retry_key] += 1
+            current_retry_count = st.session_state.get(retry_key, 0)
+            st.session_state[retry_key] = current_retry_count + 1
             
             if st.session_state[retry_key] <= max_retries:
                 # Show retry option
-                st.error(f"❌ Upload failed (attempt {st.session_state[retry_key]}): Network error or file too large.")
+                current_retry_count = st.session_state.get(retry_key, 0)
+                st.error(f"❌ Upload failed (attempt {current_retry_count}): Network error or file too large.")
                 st.warning("💡 **Possible solutions:**")
                 st.markdown("- Try a **smaller image** (under 1MB)")
                 st.markdown("- **Refresh the page** and try again")
                 st.markdown("- **Compress your image** before uploading")
                 
                 # Auto-retry button
-                if st.button("🔄 Retry Upload", key=f"retry_{key}_{st.session_state[retry_key]}"):
+                if st.button("🔄 Retry Upload", key=f"retry_{key}_{current_retry_count}"):
                     st.rerun()
                 
                 return None
