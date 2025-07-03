@@ -153,6 +153,43 @@ def cleanup_memory():
     except Exception:
         pass
 
+def clear_upload_session():
+    """Clear all upload-related session state to prevent conflicts"""
+    try:
+        # Clear all file uploader related session state
+        upload_keys = [k for k in st.session_state.keys() if 'upload' in k.lower() or 'file' in k.lower()]
+        for key in upload_keys:
+            if key in st.session_state:
+                del st.session_state[key]
+        
+        # Clear any cached file data
+        if hasattr(st, '_file_uploader_state_cache'):
+            st._file_uploader_state_cache.clear()
+            
+        # Force garbage collection
+        gc.collect()
+        
+    except Exception as e:
+        # Silent fail - don't break the app if cleanup fails
+        pass
+
+def reset_file_uploader_widget(key):
+    """Reset specific file uploader widget state"""
+    try:
+        # Clear the specific widget's session state
+        widget_keys = [k for k in st.session_state.keys() if key in k]
+        for widget_key in widget_keys:
+            if widget_key in st.session_state:
+                del st.session_state[widget_key]
+                
+        # Clear any retry counters for this widget
+        retry_key = f"{key}_retry_count"
+        if retry_key in st.session_state:
+            st.session_state[retry_key] = 0
+            
+    except Exception:
+        pass
+
 def validate_uploaded_file(uploaded_file, max_size_mb=3):
     """Validate uploaded file size and type for cloud compatibility"""
     if uploaded_file is None:
@@ -187,6 +224,11 @@ def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, 
     if retry_key not in st.session_state:
         st.session_state[retry_key] = 0
     
+    # Proactive cleanup before first attempt to prevent session conflicts
+    if st.session_state[retry_key] == 0:
+        clear_upload_session()
+        reset_file_uploader_widget(key)
+    
     # Maximum retry attempts
     max_retries = 3
     
@@ -219,6 +261,9 @@ def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, 
             
             # Reset retry counter on successful upload
             st.session_state[retry_key] = 0
+            
+            # Cleanup after successful upload to prevent future conflicts
+            cleanup_memory()
             
             # Show success message for valid uploads
             if not accept_multiple_files:  # Single file
@@ -578,6 +623,12 @@ if source == "Image":
 # Sidebar: Start button at the end for other sources (optional, can be removed if not needed)
 st.sidebar.markdown("<div style='height: 32px;'></div>", unsafe_allow_html=True)  # Spacer
 
+# Initialize clean session state on app start
+if "app_initialized" not in st.session_state:
+    clear_upload_session()
+    cleanup_memory()
+    st.session_state["app_initialized"] = True
+
 # Main title and subtitle
 st.markdown("""
 <div><h1 style="color:#00cfff; text-align:center; font-size:40px; margin-top:-50px; font-family: 'Archivo', sans-serif; margin-bottom:20px;">LeukoDetect Application 🔬 </h1></div>
@@ -708,9 +759,13 @@ if source == "Image" and st.session_state.get("show_upload", False):
         st.markdown("<div style='margin-top: 30px;'></div>", unsafe_allow_html=True)
         
         # Clear button to try another image
-        if st.button("🔄 Clear and Try Another Image", key="clear_example"):
+        if st.button("🔄 Clear and Try Another Image", key="clear_upload_1"):
             if "uploaded_example" in st.session_state:
                 del st.session_state["uploaded_example"]
+            # Comprehensive cleanup before next upload
+            clear_upload_session()
+            reset_file_uploader_widget("main_image_uploader")
+            cleanup_memory()
             st.rerun()
     
     elif example_file is not None:
@@ -814,9 +869,13 @@ if source == "Image" and st.session_state.get("show_upload", False):
         st.markdown("<div style='margin-top: 30px;'></div>", unsafe_allow_html=True)
         
         # Clear button to try another image
-        if st.button("🔄 Clear and Try Another Image", key="clear_example"):
+        if st.button("🔄 Clear and Try Another Image", key="clear_upload_2"):
             if "uploaded_example" in st.session_state:
                 del st.session_state["uploaded_example"]
+            # Comprehensive cleanup before next upload
+            clear_upload_session()
+            reset_file_uploader_widget("main_image_uploader")
+            cleanup_memory()
             st.rerun()
     
     # Example Images Section - Clickable Thumbnails
@@ -848,6 +907,10 @@ if source == "Image" and st.session_state.get("show_upload", False):
             col_btn1, col_btn2, col_btn3 = st.columns([0.5, 1, 0.5])
             with col_btn2:
                 if st.button("Load Image", key="click_myeloblasts", type="secondary"):
+                    # Clear any existing upload state first
+                    clear_upload_session()
+                    reset_file_uploader_widget("main_image_uploader")
+                    
                     # Store the example image in session state to simulate file upload
                     st.session_state["uploaded_example"] = {
                         "image": example_image,
@@ -877,6 +940,10 @@ if source == "Image" and st.session_state.get("show_upload", False):
             col_btn1, col_btn2, col_btn3 = st.columns([0.5, 1, 0.5])
             with col_btn2:
                 if st.button("Load Image", key="click_neutrophils", type="secondary"):
+                    # Clear any existing upload state first
+                    clear_upload_session()
+                    reset_file_uploader_widget("main_image_uploader")
+                    
                     # Store the example image in session state to simulate file upload
                     st.session_state["uploaded_example"] = {
                         "image": example_image,
