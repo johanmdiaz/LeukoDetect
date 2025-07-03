@@ -2,7 +2,6 @@
 
 A real-time leukemia cell detection application powered by YOLO11 and Streamlit. Analyze blood smear images to detect various types of leukemia cells with high accuracy using state-of-the-art machine learning models.
 
-![LeukoDetect](https://raw.githubusercontent.com/johanmdiaz/LeukoDetect/main/logov1.png)
 
 ## ✨ Features
 
@@ -37,9 +36,9 @@ The application uses custom-trained YOLO11 models specifically designed for leuk
 
 | Model | Description | Use Case |
 |-------|-------------|----------|
-| `yolo11l_v5_3` | Large model variant | Balanced speed and accuracy |
-| `yolo11x_v5_3` | Extra-large model (v3) | High accuracy applications |
-| `yolo11x_v5_4` | Extra-large model (v4) | Latest, most accurate model |
+| `yolo11l_v5_3` | Large model variant |  |
+| `yolo11x_v5_3` | Extra-large model (v3) |  |
+| `yolo11x_v5_4` | Extra-large model (v4) |  |
 
 All models are automatically downloaded on first use and cached locally for faster subsequent runs.
 
@@ -123,8 +122,8 @@ The application includes built-in example images for testing:
 
 | Image | Description | Source |
 |-------|-------------|---------|
-| Myeloblasts | Myeloblasts on peripheral blood smear | Research dataset |
-| Neutrophils | Neutrophils in blood smear | Research dataset |
+| Myeloblasts | Myeloblasts on peripheral blood smear | https://commons.wikimedia.org/wiki/File:Myeloblasts_on_peripheral_bloodsmear.jpg |
+| Neutrophils | Neutrophils in blood smear | https://commons.wikimedia.org/wiki/File:Neutrophils.jpg |
 
 These images are automatically available in both local and cloud deployments.
 
@@ -149,12 +148,12 @@ These images are automatically available in both local and cloud deployments.
 
 ## 🩺 About the Project
 
-**LeukoDetect** was developed by a team of medical professionals and AI researchers:
+**LeukoDetect** was developed by a team of medical professionals:
 
 - **Johan Diaz, MD** - Lead Developer
-- **Arunima Deb, MD** - Medical Advisor  
-- **Alexandra Lyubimova, DO** - Clinical Validation
-- **Cedric Nasnan, MD** - Research Coordinator
+- **Arunima Deb, MD** -  
+- **Alexandra Lyubimova, DO** - 
+- **Cedric Nasnan, MD** - 
 
 ### Training Dataset
 
@@ -183,13 +182,8 @@ arXiv. Published May 17, 2024. doi:10.48550/arXiv.2405.10803
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our contributing guidelines:
+We welcome contributions! 
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
 
 ## 📞 Support
 
