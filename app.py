@@ -919,23 +919,14 @@ elif source == "Webcam":
     if is_cloud_deployment:
         st.warning("⚠️ Webcam is not available on cloud deployments")
         st.info("""
-        **🎥 Webcam functionality requires local deployment**
+        **📸 Single Photo Analysis Available**
         
-        **Alternative solutions:**
-        1. **📸 Use Image Upload**: Switch to 'Image' source for single image analysis
-        2. **🎬 Use Video Upload**: Switch to 'Video' source to upload and analyze video files
-        3. **💻 Run Locally**: Download and run this app locally to access your webcam
+        Real-time webcam is only available when running locally. However, you can still analyze photos using the camera input below!
         
-        **To run locally:**
-        ```bash
-        git clone https://github.com/johanmdiaz/LeukoDetect
-        cd LeukoDetect
-        pip install -r requirements.txt
-        streamlit run app.py
-        ```
-        
-        **📱 Alternative: Use Streamlit Camera Input**
-        You can also use the built-in camera input for single photos (though not real-time):
+        **Other options:**
+        • Switch to **'Image'** source to upload saved photos
+        • Switch to **'Video'** source to upload video files
+        • Run locally for real-time webcam access
         """)
         
         # Alternative: Camera input for single photos
