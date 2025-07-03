@@ -1,0 +1,39 @@
+[server]
+# Cloud-optimized file upload settings
+maxUploadSize = 10
+maxMessageSize = 10
+enableWebsocketCompression = true
+enableCORS = true
+enableXsrfProtection = false
+
+# Reduce memory pressure on cloud platforms
+enableArrowTruncation = true
+
+# Cloud platform settings
+port = 8501
+address = "0.0.0.0"
+headless = true
+
+# Session settings for cloud deployment
+disconnectedSessionTTL = 60
+
+# Browser settings
+gatherUsageStats = false
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#155a5a"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
+
+[global]
+# Development settings
+developmentMode = false
+logLevel = "info"
+
+# Reduce memory usage
+maxCachedMessageAge = 2
+dataFrameSerialization = "legacy" 
