@@ -380,7 +380,16 @@ def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, 
 def safe_extract_tensor_value(tensor_like_obj):
     """Safely extract value from tensor or non-tensor object"""
     if hasattr(tensor_like_obj, 'cpu'):
-        return tensor_like_obj.cpu().numpy()
+        # Convert tensor to numpy and extract scalar value
+        numpy_val = tensor_like_obj.cpu().numpy()
+        return numpy_val.item() if numpy_val.ndim == 0 else numpy_val
+    elif hasattr(tensor_like_obj, 'numpy'):
+        # Handle other tensor types
+        numpy_val = tensor_like_obj.numpy()
+        return numpy_val.item() if numpy_val.ndim == 0 else numpy_val
+    elif hasattr(tensor_like_obj, 'item'):
+        # Handle numpy arrays with single elements
+        return tensor_like_obj.item()
     else:
         return tensor_like_obj
 
@@ -924,7 +933,6 @@ elif source == "Webcam":
     ])
     
     if is_cloud_deployment:
-        st.warning("⚠️ Webcam is not available on cloud deployments")
         st.info("""
         **📸 Single Photo Analysis Available**
         
