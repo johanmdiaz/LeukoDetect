@@ -137,7 +137,6 @@ def optimize_image_for_display(image, max_width=800, max_height=600):
                 # For very large files, be more aggressive
                 max_width = min(max_width, 1200)
                 max_height = min(max_height, 900)
-                st.info(f"🔄 Optimizing large image ({file_size_mb:.1f}MB) for better performance...")
             elif file_size_mb > 2:
                 # For medium files, moderate optimization
                 max_width = min(max_width, 1000)
