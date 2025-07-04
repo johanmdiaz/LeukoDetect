@@ -129,6 +129,20 @@ def optimize_image_for_display(image, max_width=800, max_height=600):
                 new_w, new_h = int(w * ratio), int(h * ratio)
                 image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
         elif isinstance(image, Image.Image):
+            # Smart optimization based on file size
+            file_size_mb = len(image.tobytes()) / (1024 * 1024)
+            
+            # Progressive optimization for larger files
+            if file_size_mb > 5:
+                # For very large files, be more aggressive
+                max_width = min(max_width, 1200)
+                max_height = min(max_height, 900)
+                st.info(f"🔄 Optimizing large image ({file_size_mb:.1f}MB) for better performance...")
+            elif file_size_mb > 2:
+                # For medium files, moderate optimization
+                max_width = min(max_width, 1000)
+                max_height = min(max_height, 750)
+            
             image.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
         return image
     except Exception as e:
@@ -212,7 +226,7 @@ def clear_upload_session():
         # Clear all file uploader related session state, but preserve important UI state
         upload_keys = [k for k in st.session_state.keys() if 'upload' in k.lower() or 'file' in k.lower()]
         # Preserve important session state keys
-        preserve_keys = ['show_upload', 'uploaded_example']
+        preserve_keys = ['show_upload', 'uploaded_example', 'app_initialized']
         for key in upload_keys:
             if key in st.session_state and key not in preserve_keys:
                 del st.session_state[key]
@@ -220,6 +234,14 @@ def clear_upload_session():
         # Clear any cached file data
         if hasattr(st, '_file_uploader_state_cache'):
             st._file_uploader_state_cache.clear()
+        
+        # Clear Streamlit's internal file upload state
+        try:
+            # Force clear any pending uploads
+            if hasattr(st, '_uploaded_file_manager'):
+                st._uploaded_file_manager.clear()
+        except:
+            pass
             
         # Force garbage collection
         gc.collect()
@@ -250,10 +272,22 @@ def validate_uploaded_file(uploaded_file, max_size_mb=10):
     if uploaded_file is None:
         return False, "No file uploaded"
     
-    # Check file size (increased limit for better user experience)
+    # Check file size with progressive limits
     file_size_mb = uploaded_file.size / (1024 * 1024)
-    if file_size_mb > max_size_mb:
-        return False, f"File too large ({file_size_mb:.1f}MB). Maximum size allowed: {max_size_mb}MB"
+    
+    # Progressive size validation based on cloud deployment
+    if IS_CLOUD or force_cloud_mode:
+        # Cloud deployment: Progressive limits
+        if file_size_mb > max_size_mb:
+            return False, f"File too large ({file_size_mb:.1f}MB). Maximum size allowed: {max_size_mb}MB"
+        elif file_size_mb > 5:
+            # Warning for large files on cloud
+            st.warning(f"⚠️ Large file detected ({file_size_mb:.1f}MB). Processing may take longer on cloud platforms.")
+    else:
+        # Local deployment: Higher limits
+        local_max_size = min(max_size_mb * 2, 50)  # Up to 50MB locally
+        if file_size_mb > local_max_size:
+            return False, f"File too large ({file_size_mb:.1f}MB). Maximum size allowed: {local_max_size}MB"
     
     # Check file type - MUST match the uploader's accepted types exactly
     allowed_types = ['jpg', 'jpeg', 'png']  # Match file_uploader type parameter
@@ -295,7 +329,7 @@ def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, 
         reset_file_uploader_widget(key)
     
     # Maximum retry attempts (reduced to minimize 400 errors)
-    max_retries = 1
+    max_retries = 2
     
     try:
         # Show retry information if needed
@@ -343,37 +377,53 @@ def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, 
         # Handle upload errors gracefully with retry logic
         error_msg = str(e).lower()
         
-        if any(code in error_msg for code in ["400", "bad request", "network error", "timeout"]):
+        # Check for specific 400 error patterns
+        if any(code in error_msg for code in ["400", "bad request", "network error", "timeout", "invalid session"]):
             current_retry_count = st.session_state.get(retry_key, 0)
             st.session_state[retry_key] = current_retry_count + 1
             
             if st.session_state[retry_key] <= max_retries:
-                # Show retry option
+                # Show retry option with specific guidance for 400 errors
                 current_retry_count = st.session_state.get(retry_key, 0)
-                st.error(f"❌ Upload failed: Network error or file too large.")
-                st.warning("💡 **Try these solutions:**")
-                st.markdown("- Use a **smaller image** (under 5MB)")
-                st.markdown("- **Refresh the page** and try again")
-                st.markdown("- **Compress your image** before uploading")
+                st.error(f"❌ Upload failed (attempt {current_retry_count}): {error_msg}")
+                st.warning("💡 **This is a known cloud deployment issue. Try these solutions:**")
+                st.markdown("- **Use a smaller image** (under 5MB for best results)")
+                st.markdown("- **Refresh the page completely** and try again")
+                st.markdown("- **Clear browser cache** and cookies")
+                st.markdown("- **Try a different browser** or incognito mode")
+                st.markdown("- **Wait 30 seconds** before retrying")
                 
-                # Auto-retry button
-                if st.button("🔄 Retry Upload", key=f"retry_{key}_{current_retry_count}"):
-                    st.rerun()
+                # Auto-retry button with delay
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    if st.button("🔄 Retry Upload", key=f"retry_{key}_{current_retry_count}"):
+                        # Add a small delay before retry
+                        import time
+                        time.sleep(1)
+                        st.rerun()
+                
+                with col2:
+                    if st.button("🔄 Refresh Page", key=f"refresh_{key}_{current_retry_count}"):
+                        st.rerun()
                 
                 return None
             else:
                 # Max retries reached - offer alternative solution
-                st.error("❌ **Upload failed.** Please try a smaller image or refresh the page.")
-                st.info("💡 **Tip:** Images under 5MB work best on cloud deployments.")
+                st.error("❌ **Upload failed after multiple attempts.** This is a known issue with cloud deployments.")
+                st.warning("🛠️ **Alternative Solutions:**")
+                st.markdown("1. **Try the example images** below instead of uploading")
+                st.markdown("2. **Use a different device** or browser")
+                st.markdown("3. **Contact support** if the issue persists")
                 
                 # Reset retry counter
                 st.session_state[retry_key] = 0
                 return None
         
         elif "413" in error_msg:
-            st.error("❌ Upload failed: File is too large. Please try a smaller file (under 5MB).")
+            st.error("❌ Upload failed: File is too large. Please try a smaller file (under 10MB).")
         else:
             st.error(f"❌ Upload failed: {e}")
+            st.info("💡 Try refreshing the page and uploading a smaller image.")
         
         return None
 
@@ -636,7 +686,10 @@ st.sidebar.markdown("<div style='height: 32px;'></div>", unsafe_allow_html=True)
 # Initialize clean session state on app start
 if "app_initialized" not in st.session_state:
     cleanup_memory()
+    # Clear any existing upload state to prevent conflicts
+    clear_upload_session()
     st.session_state["app_initialized"] = True
+    st.session_state["show_upload"] = False  # Reset upload state
 
 # Main title and subtitle
 st.markdown("""
@@ -650,13 +703,26 @@ st.markdown("""
 if source == "Image" and st.session_state.get("show_upload", False):
     st.markdown("### Upload your Image")
     
+    # Show cloud deployment notice
+    if IS_CLOUD or force_cloud_mode:
+        st.info("""
+        **🌐 Cloud Deployment Notice**
+        
+        For best results on cloud platforms:
+        - **Recommended**: Images under 5MB for faster processing
+        - **Maximum**: Images up to 10MB are supported
+        - Supported formats: JPG, JPEG, PNG
+        - If upload fails, try refreshing the page
+        - Example images are available below for testing
+        """)
+    
     # Single file uploader that handles both regular uploads and example images
     uploaded_file = safe_file_uploader(
         "Drag and drop your Image here or browse your computer",
         type=["jpg", "jpeg", "png"],
         label_visibility="collapsed",
         key="main_image_uploader",
-        max_size_mb=3
+        max_size_mb=10  # Increased to 10MB for larger images
     )
     
     # Check if we have an example image selected
