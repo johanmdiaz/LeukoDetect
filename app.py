@@ -109,7 +109,7 @@ def convert_image_to_base64(image):
         img_str = base64.b64encode(buffered.getvalue()).decode()
         
         # Final safety check on base64 string size
-        if len(img_str) > 10_000_000:  # ~10MB base64 limit
+        if len(img_str) > 15_000_000:  # ~15MB base64 limit (increased from 10MB)
             st.warning("Image too large after processing. Try uploading a smaller image.")
             return None
             
@@ -245,12 +245,12 @@ def reset_file_uploader_widget(key):
     except Exception:
         pass
 
-def validate_uploaded_file(uploaded_file, max_size_mb=3):
+def validate_uploaded_file(uploaded_file, max_size_mb=10):
     """Validate uploaded file size and type for cloud compatibility"""
     if uploaded_file is None:
         return False, "No file uploaded"
     
-    # Check file size (cloud platforms typically have smaller limits)
+    # Check file size (increased limit for better user experience)
     file_size_mb = uploaded_file.size / (1024 * 1024)
     if file_size_mb > max_size_mb:
         return False, f"File too large ({file_size_mb:.1f}MB). Maximum size allowed: {max_size_mb}MB"
@@ -271,7 +271,7 @@ def validate_uploaded_file(uploaded_file, max_size_mb=3):
 
 def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, help=None, 
                       on_change=None, args=None, kwargs=None, disabled=False, 
-                      label_visibility="visible", max_size_mb=3):
+                      label_visibility="visible", max_size_mb=10):
     """Cloud-safe file uploader with enhanced error handling and retry logic"""
     
     # Set cloud-optimized default file types if not specified
@@ -294,8 +294,8 @@ def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, 
         clear_upload_session()
         reset_file_uploader_widget(key)
     
-    # Maximum retry attempts
-    max_retries = 3
+    # Maximum retry attempts (reduced to minimize 400 errors)
+    max_retries = 1
     
     try:
         # Show retry information if needed
@@ -350,9 +350,9 @@ def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, 
             if st.session_state[retry_key] <= max_retries:
                 # Show retry option
                 current_retry_count = st.session_state.get(retry_key, 0)
-                st.error(f"❌ Upload failed (attempt {current_retry_count}): Network error or file too large.")
-                st.warning("💡 **Possible solutions:**")
-                st.markdown("- Try a **smaller image** (under 1MB)")
+                st.error(f"❌ Upload failed: Network error or file too large.")
+                st.warning("💡 **Try these solutions:**")
+                st.markdown("- Use a **smaller image** (under 5MB)")
                 st.markdown("- **Refresh the page** and try again")
                 st.markdown("- **Compress your image** before uploading")
                 
@@ -363,15 +363,15 @@ def safe_file_uploader(label, type=None, accept_multiple_files=False, key=None, 
                 return None
             else:
                 # Max retries reached - offer alternative solution
-                st.error("❌ **Upload failed after multiple attempts.** This is a known issue with cloud deployments.")
-                st.warning("🛠️ **Alternative Solution:** Try using a smaller image (under 1MB) or contact support.")
+                st.error("❌ **Upload failed.** Please try a smaller image or refresh the page.")
+                st.info("💡 **Tip:** Images under 5MB work best on cloud deployments.")
                 
                 # Reset retry counter
                 st.session_state[retry_key] = 0
                 return None
         
         elif "413" in error_msg:
-            st.error("❌ Upload failed: File is too large. Please try a smaller file (under 1MB).")
+            st.error("❌ Upload failed: File is too large. Please try a smaller file (under 5MB).")
         else:
             st.error(f"❌ Upload failed: {e}")
         
