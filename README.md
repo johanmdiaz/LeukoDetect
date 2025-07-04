@@ -45,7 +45,7 @@ All models are automatically downloaded on first use and cached locally for fast
 ## 🚀 Quick Start
 
 ### Try Online (Recommended)
-Visit the live demo: [LeukoDetect on Streamlit Cloud](https://leukodetect.streamlit.app) *(Update with your actual URL)*
+Visit the live demo: [LeukoDetect on Streamlit Cloud](https://leukodetect.onrender.com) 
 
 ### Local Installation
 
