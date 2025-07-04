@@ -34,11 +34,11 @@ A real-time leukemia cell detection application powered by YOLO11 and Streamlit.
 
 The application uses custom-trained YOLO11 models specifically designed for leukemia cell detection:
 
-| Model | Description | Use Case |
-|-------|-------------|----------|
-| `yolo11l_v5_3` | Large model variant |  |
-| `yolo11x_v5_3` | Extra-large model (v3) |  |
-| `yolo11x_v5_4` | Extra-large model (v4) |  |
+| Model | Description |
+|-------|-------------|
+| `yolo11l_v5_3` | Large model variant |
+| `yolo11x_v5_3` | Extra-large model (v3) |
+| `yolo11x_v5_4` | Extra-large model (v4) |
 
 All models are automatically downloaded on first use and cached locally for faster subsequent runs.
 
