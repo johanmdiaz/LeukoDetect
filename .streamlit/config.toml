@@ -1,20 +1,29 @@
 [server]
-# Ultra-conservative file upload settings for maximum Render compatibility
-maxUploadSize = 3
-maxMessageSize = 3
+# Progressive file size settings for cloud deployment
+maxUploadSize = 10              # Increased to 10MB for larger images
+maxMessageSize = 10             # Match upload size
 enableWebsocketCompression = false
 enableCORS = false
 enableXsrfProtection = false
+headless = true
+
+# Enhanced timeout settings for larger files
+connectionTimeout = 120         # Increased for larger uploads
+keepAliveTimeout = 120          # Increased for larger uploads
+requestTimeout = 120            # Added request timeout
+
+# File upload settings
+fileWatcherType = "none"
+
+# Memory and performance optimizations
+disconnectedSessionTTL = 300    # Increased session TTL
+sessionStateMaxEntries = 2000   # Increased session state capacity
+sessionStateMaxBytes = 200      # Increased session state size
 
 # Enhanced timeout and connection settings
-disconnectedSessionTTL = 30
-sessionStateMaxEntries = 500
-sessionStateMaxBytes = 50
-
-# Network timeout optimizations
-connectionTimeout = 30
-keepAliveTimeout = 30
-requestTimeout = 30
+disconnectedSessionTTL = 60
+sessionStateMaxEntries = 1000
+sessionStateMaxBytes = 100
 
 # Memory and performance optimizations
 enableArrowTruncation = true
@@ -22,20 +31,21 @@ enableArrowTruncation = true
 # Cloud platform settings
 port = 8501
 address = "0.0.0.0"
-headless = true
 
 # Browser settings
 gatherUsageStats = false
 
 [browser]
+# Disable some features that can cause issues on cloud
 gatherUsageStats = false
 serverAddress = "0.0.0.0"
 serverPort = 8501
 
 [theme]
-primaryColor = "#155a5a"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f0f2f6"
+# Keep default theme for consistency
+primaryColor = "#FF3D3D"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
 textColor = "#262730"
 
 [global]
@@ -43,13 +53,13 @@ textColor = "#262730"
 developmentMode = false
 logLevel = "error"
 
-# Ultra-conservative memory settings
-maxCachedMessageAge = 0
+# Optimized memory settings for image processing
+maxCachedMessageAge = 2
 dataFrameSerialization = "legacy"
 showErrorDetails = false
 
 # Network timeout settings
 [client]
-caching = false
+caching = true
 displayEnabled = true
 toolbarMode = "minimal" 
