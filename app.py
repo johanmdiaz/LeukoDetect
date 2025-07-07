@@ -535,16 +535,16 @@ def download_file(url, filepath, file_type="file"):
                         progress = downloaded / total_size
                         progress_bar.progress(progress)
                         if file_type == "model":
-                            status_text.text(f"Downloading: {downloaded / (1024*1024):.1f} MB / {total_size / (1024*1024):.1f} MB")
+                            status_text.text(f"Loading: {downloaded / (1024*1024):.1f} MB / {total_size / (1024*1024):.1f} MB")
                         else:
-                            status_text.text(f"Downloading {file_type}...")
+                            status_text.text(f"Loading {file_type}...")
         
         progress_bar.empty()
         status_text.empty()
         return True
         
     except Exception as e:
-        st.error(f"Error downloading {file_type}: {str(e)}")
+        st.error(f"Error Loading {file_type}: {str(e)}")
         return False
 
 def ensure_logo_exists():
@@ -579,7 +579,7 @@ def ensure_model_exists(model_name):
     if not os.path.exists(filepath):
         st.warning(f"Model {model_name} not found locally. Loading Model please wait...")
         
-        with st.spinner(f"Downloading {model_name}..."):
+        with st.spinner(f"Loading {model_name}..."):
             success = download_file(config["url"], filepath, "model")
             
         if success:
