@@ -16,7 +16,7 @@ import base64
 import gc
 import warnings
 
-# Fix Ultralytics config directory warning for cloud deployments
+# Fix Ultralytics config directory for cloud deployments
 if not os.environ.get('YOLO_CONFIG_DIR'):
     # Set to a writable directory (temp dir or current working directory)
     config_dir = os.path.join(tempfile.gettempdir(), 'ultralytics_config')
@@ -72,7 +72,7 @@ def convert_image_to_base64(image):
                 image = Image.fromarray(image, 'L')
         
         # Safety check: Ensure image isn't too large before base64 conversion
-        # Prevent memory issues that could cause 400 errors
+        # Prevent memory issues 
         if hasattr(image, 'size'):
             width, height = image.size
             pixel_count = width * height
@@ -109,7 +109,7 @@ def convert_image_to_base64(image):
         img_str = base64.b64encode(buffered.getvalue()).decode()
         
         # Final safety check on base64 string size
-        if len(img_str) > 15_000_000:  # ~15MB base64 limit (increased from 10MB)
+        if len(img_str) > 15_000_000:  # ~15MB base64 limit
             st.warning("Image too large after processing. Try uploading a smaller image.")
             return None
             
@@ -577,7 +577,7 @@ def ensure_model_exists(model_name):
     filepath = config["path"]
     
     if not os.path.exists(filepath):
-        st.warning(f"Model {model_name} not found locally. Downloading from Dropbox...")
+        st.warning(f"Model {model_name} not found locally. Loading Model please wait...")
         
         with st.spinner(f"Downloading {model_name}..."):
             success = download_file(config["url"], filepath, "model")
