@@ -583,9 +583,9 @@ def ensure_model_exists(model_name):
             success = download_file(config["url"], filepath, "model")
             
         if success:
-            st.success(f"✅ Model {model_name} downloaded successfully!")
+            st.success(f"✅ Model {model_name} loaded successfully!")
         else:
-            st.error(f"❌ Failed to download model {model_name}")
+            st.error(f"❌ Failed to load model {model_name}")
             return False
     
     return True
